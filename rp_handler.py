@@ -133,7 +133,7 @@ def handler(event):
     )
     os.rename(f"{output_path}{prompt}.mp4", f"{output_path}{video_file_name}")
     # Upload the video to S3
-    upload_file(f"{output_path}{video_file_name}", input.get('user_uuid'), S3_BUCKET, video_file_name)
+    upload_file(f"{output_path}{video_file_name}", input.get('user_uuid', 'system_default'), S3_BUCKET, video_file_name)
     return prompt
 
 
