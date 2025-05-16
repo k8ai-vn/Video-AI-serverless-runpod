@@ -19,7 +19,7 @@ S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
 # MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
-MODEL_NAME = 'FastVideo/FastMochi-diffusers'
+MODEL_NAME = 'Wan-AI/Wan2.1-I2V-14B-720P'
 # Create directories if they don't exist
 os.makedirs(MODEL_CACHE_PATH, exist_ok=True)
 os.makedirs(OUTPUT_PATH, exist_ok=True)
@@ -71,7 +71,7 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
 
 # Create a video generator with a pre-trained model
 generator = VideoGenerator.from_pretrained(
-    MODEL_NAME,
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     num_gpus=4,  # Adjust based on your hardware
 )
 
