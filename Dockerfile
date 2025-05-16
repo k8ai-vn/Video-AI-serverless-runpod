@@ -1,37 +1,40 @@
-# Base image: Đã có sẵn Python 3.12, CUDA 12.1, cuDNN, PyTorch, Transformers
-FROM huggingface/transformers-pytorch-gpu:4.41.3
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
-# Set HuggingFace cache để tận dụng shared volume của RunPod (tăng tốc tải model)
-ENV HF_HOME="/runpod-volume/.cache/huggingface"
+# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency:
+ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 
-# Tùy chọn: Ngăn apt yêu cầu prompt
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Cài các thư viện hệ thống cần thiết
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    python3.10-venv \
     git \
-    ffmpeg \
     wget \
-    curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Tạo thư mục làm việc
+# Set Python 3.10 as default
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
+
 WORKDIR /workspace
 
-# Copy trước requirements.txt để tận dụng cache của Docker layer
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt /workspace/requirements.txt
 
-# Cài Python packages
+# Install Python packages
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install -r /workspace/requirements.txt
 
-# Optional: Nếu bạn dùng flash-attention (và không cần build CUDA riêng)
+# Install flash-attention with CUDA build skipped
 ENV FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE
 RUN pip install packaging ninja && \
     pip install flash-attn==2.7.0.post2 --no-build-isolation
 
-# Copy toàn bộ source code vào container
+# Copy the rest of the application
 COPY . /workspace
 
-# Entry point cho RunPod (RunPod yêu cầu file `rp_handler.py` hoặc hàm `handler`)
-CMD ["python", "-u", "rp_handler.py"]
+# Set up the entrypoint
+CMD [ "python", "-u", "rp_handler.py" ] 
