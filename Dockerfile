@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
-# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency
+# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency:
 ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 
 # Install system dependencies
@@ -14,12 +14,11 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.12 as default
+# Set Python 3.10 as default
 RUN ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     ln -sf /usr/bin/pip3 /usr/bin/pip
 
-    
 WORKDIR /workspace
 
 # Copy requirements first to leverage Docker cache
