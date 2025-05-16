@@ -70,18 +70,6 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         return False
     return True
 
-config = PipelineConfig.from_pretrained(MODEL_NAME)
-# Can adjust any parameters
-# Other arguments will be set to best defaults
-config.num_gpus = 4 # how many GPUS to parallelize generation
-config.vae_config.vae_precision = "fp32"
-
-# Create a video generator with a pre-trained model
-generator = VideoGenerator.from_pretrained(
-    MODEL_NAME,
-    pipeline_config=config
-    # num_gpus=4,  # Adjust based on your hardware
-)
 
 
 def handler(event):
@@ -139,4 +127,17 @@ def handler(event):
 
 # Start the Serverless function when the script is run
 if __name__ == '__main__':
+    config = PipelineConfig.from_pretrained(MODEL_NAME)
+    # Can adjust any parameters
+    # Other arguments will be set to best defaults
+    config.num_gpus = 4 # how many GPUS to parallelize generation
+    config.vae_config.vae_precision = "fp32"
+
+    # Create a video generator with a pre-trained model
+    generator = VideoGenerator.from_pretrained(
+        MODEL_NAME,
+        pipeline_config=config
+        # num_gpus=4,  # Adjust based on your hardware
+    )
+
     runpod.serverless.start({'handler': handler })
