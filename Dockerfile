@@ -1,5 +1,5 @@
 # Base image: Đã có sẵn Python 3.12, CUDA 12.1, cuDNN, PyTorch, Transformers
-FROM huggingface/transformers-pytorch-gpu:4.40.0-py3.12-cu121-ubuntu22.04
+FROM huggingface/transformers-pytorch-gpu:4.41.3
 
 # Set HuggingFace cache để tận dụng shared volume của RunPod (tăng tốc tải model)
 ENV HF_HOME="/runpod-volume/.cache/huggingface"
