@@ -5,17 +5,20 @@ ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-dev \
     python3-pip \
-    python3.10-venv \
+    python3.12-venv \
     git \
     wget \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.10 as default
-RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
+# Set Python 3.12 as default
+RUN ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     ln -sf /usr/bin/pip3 /usr/bin/pip
 
