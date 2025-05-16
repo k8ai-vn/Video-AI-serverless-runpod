@@ -126,6 +126,7 @@ def handler(event):
 
 # Start the Serverless function when the script is run
 if __name__ == '__main__':
+    
     from fastvideo import VideoGenerator, SamplingParam, PipelineConfig
 
     config = PipelineConfig.from_pretrained(MODEL_NAME)
