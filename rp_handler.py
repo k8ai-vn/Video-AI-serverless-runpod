@@ -1,6 +1,6 @@
 import runpod
 import time  
-from fastvideo import VideoGenerator
+from fastvideo import VideoGenerator, SamplingParam, PipelineConfig
 import os
 import boto3
 import datetime
@@ -70,10 +70,17 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         return False
     return True
 
+config = PipelineConfig.from_pretrained(MODEL_NAME)
+# Can adjust any parameters
+# Other arguments will be set to best defaults
+config.num_gpus = 4 # how many GPUS to parallelize generation
+config.vae_config.vae_precision = "fp32"
+
 # Create a video generator with a pre-trained model
 generator = VideoGenerator.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-    num_gpus=4,  # Adjust based on your hardware
+    MODEL_NAME,
+    pipeline_config=config
+    # num_gpus=4,  # Adjust based on your hardware
 )
 
 
@@ -93,8 +100,22 @@ def handler(event):
     input = event['input']
     
     prompt = input.get('prompt')  
+    num_inference_steps = input.get('num_inference_steps', 30)
+    guidance_scale = input.get('guidance_scale', 7.5)
+    width = input.get('width', 1024)
+    height = input.get('height', 576)
+    # Override default configurations while keeping optimal defaults for other settings
+    generator = VideoGenerator.from_pretrained(MODEL_NAME, pipeline_config=config)
 
-
+    # Generation config
+    param = SamplingParam.from_pretrained(MODEL_NAME)
+    # Adjust specific sampling parameters
+    # Other arguments will be set to best defaults
+    param.num_inference_steps=num_inference_steps # higher quality
+    param.guidance_scale=guidance_scale # stronger guidance
+    param.width=width  # Higher resolution
+    param.height=height
+    
     # Define a prompt for your video
     # prompt = "A curious raccoon peers through a vibrant field of yellow sunflowers, its eyes wide with interest."
     output_path = input.get('output_path', os.path.join(OUTPUT_PATH, 'my_videos/'))
@@ -105,7 +126,8 @@ def handler(event):
     # Generate the video
     video = generator.generate_video(
         prompt,
-        return_frames=True,  # Also return frames from this call (defaults to False)
+        sampling_param=param,
+        # return_frames=True,  # Also return frames from this call (defaults to False)
         output_path=output_path,  # Controls where videos are saved
         save_video=True
     )
