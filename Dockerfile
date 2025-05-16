@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
-# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency:
+# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency
 ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 
 # Install system dependencies
