@@ -1,10 +1,3 @@
 runpod
 fastvideo
 boto3
-
-# torch
-# transformerss
-# accelerate
-# scipy
-# sentencepiece
-# bitsandbytes
