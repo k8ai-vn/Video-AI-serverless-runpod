@@ -114,6 +114,7 @@ def handler(event):
     upload_file(f"{output_path}{video_file_name}", input.get('user_uuid'), S3_BUCKET, video_file_name)
     return prompt
 
+
 # Start the Serverless function when the script is run
 if __name__ == '__main__':
     runpod.serverless.start({'handler': handler })
