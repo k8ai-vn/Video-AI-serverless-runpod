@@ -9,6 +9,10 @@ import string
 import logging
 from botocore.exceptions import ClientError
 from botocore.config import Config
+import torch
+print("CUDA available:", torch.cuda.is_available())
+print("Number of GPUs:", torch.cuda.device_count())
+print("GPU Name:", torch.cuda.get_device_name(0))
 
 # Define network storage paths
 NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/runpod-volume')
