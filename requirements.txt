@@ -1,4 +1,9 @@
-runpod
+# runpod
+# fastvideo
+# boto3
+# torch
+torch==2.0.1+cu121
+torchvision==0.15.2+cu121
 fastvideo
+runpod
 boto3
-torch
