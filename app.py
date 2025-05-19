@@ -28,6 +28,30 @@ from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache()
 
+# Kiểm tra và chọn GPU có nhiều bộ nhớ trống nhất
+def get_best_gpu():
+    if not torch.cuda.is_available():
+        return "cpu"
+    
+    num_gpus = torch.cuda.device_count()
+    if num_gpus == 1:
+        return "cuda:0"
+    
+    # Tìm GPU có nhiều bộ nhớ trống nhất
+    max_free_memory = 0
+    best_gpu_id = 0
+    
+    for gpu_id in range(num_gpus):
+        torch.cuda.set_device(gpu_id)
+        torch.cuda.empty_cache()
+        free_memory = torch.cuda.get_device_properties(gpu_id).total_memory - torch.cuda.memory_allocated(gpu_id)
+        if free_memory > max_free_memory:
+            max_free_memory = free_memory
+            best_gpu_id = gpu_id
+    
+    print(f"Selected GPU {best_gpu_id} with {max_free_memory/1024**3:.2f} GB free memory")
+    return f"cuda:{best_gpu_id}"
+
 config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
 with open(config_file_path, "r") as file:
     PIPELINE_CONFIG_YAML = yaml.safe_load(file)
@@ -85,7 +109,7 @@ if PIPELINE_CONFIG_YAML.get("spatial_upscaler_model_path"):
     )
     print("Latent upsampler created on CPU.")
 
-target_inference_device = "cuda"
+target_inference_device = get_best_gpu()
 print(f"Target inference device: {target_inference_device}")
 pipeline_instance.to(target_inference_device)
 if latent_upsampler_instance: 
@@ -153,6 +177,16 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
              seed_ui, randomize_seed, ui_guidance_scale, improve_texture_flag,
              progress=gr.Progress(track_tqdm=True)):
 
+    # Chọn GPU tốt nhất cho mỗi lần inference
+    inference_device = get_best_gpu()
+    print(f"Using {inference_device} for this inference run")
+    
+    # Di chuyển models đến GPU được chọn
+    pipeline_instance.to(inference_device)
+    if latent_upsampler_instance:
+        latent_upsampler_instance.to(inference_device)
+    torch.cuda.empty_cache()
+
     if randomize_seed:
         seed_ui = random.randint(0, 2**32 - 1)
     seed_everething(int(seed_ui))
@@ -186,7 +220,7 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
         "width": width_padded,
         "num_frames": num_frames_padded, 
         "frame_rate": int(FPS), 
-        "generator": torch.Generator(device=target_inference_device).manual_seed(int(seed_ui)),
+        "generator": torch.Generator(device=inference_device).manual_seed(int(seed_ui)),
         "output_type": "pt", 
         "conditioning_items": None,
         "media_items": None,
@@ -219,7 +253,7 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
                 input_image_filepath, actual_height, actual_width
             )
             media_tensor = torch.nn.functional.pad(media_tensor, padding_values)
-            call_kwargs["conditioning_items"] = [ConditioningItem(media_tensor.to(target_inference_device), 0, 1.0)]
+            call_kwargs["conditioning_items"] = [ConditioningItem(media_tensor.to(inference_device), 0, 1.0)]
         except Exception as e:
             print(f"Error loading image {input_image_filepath}: {e}")
             raise gr.Error(f"Could not load image: {e}")
@@ -231,12 +265,12 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
                 width=actual_width,
                 max_frames=int(ui_frames_to_use), 
                 padding=padding_values
-            ).to(target_inference_device)
+            ).to(inference_device)
         except Exception as e:
             print(f"Error loading video {input_video_filepath}: {e}")
             raise gr.Error(f"Could not load video: {e}")
 
-    print(f"Moving models to {target_inference_device} for inference (if not already there)...")
+    print(f"Moving models to {inference_device} for inference (if not already there)...")
     torch.cuda.empty_cache()
     
     active_latent_upsampler = None
@@ -268,7 +302,7 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
             "second_pass": second_pass_args,
         })
         
-        print(f"Calling multi-scale pipeline (eff. HxW: {actual_height}x{actual_width}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {target_inference_device}")
+        print(f"Calling multi-scale pipeline (eff. HxW: {actual_height}x{actual_width}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
         result_images_tensor = multi_scale_pipeline_obj(**multi_scale_call_kwargs).images
     else:
         single_pass_call_kwargs = call_kwargs.copy()
@@ -286,7 +320,7 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
         single_pass_call_kwargs.pop("second_pass", None)
         single_pass_call_kwargs.pop("downscale_factor", None)
         
-        print(f"Calling base pipeline (padded HxW: {height_padded}x{width_padded}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {target_inference_device}")
+        print(f"Calling base pipeline (padded HxW: {height_padded}x{width_padded}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
         result_images_tensor = pipeline_instance(**single_pass_call_kwargs).images
 
     if result_images_tensor is None:

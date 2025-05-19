@@ -24,4 +24,6 @@ source env/bin/activate
 
 # Install dependencies and run
 pip install -r requirements.txt
+pip install gradio[mcp]
+
 python app.py
