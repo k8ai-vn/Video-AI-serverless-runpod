@@ -123,22 +123,37 @@ def distribute_models_to_gpus(pipeline, latent_upsampler=None):
         # If only one GPU, keep everything on that GPU
         return pipeline, latent_upsampler
     
-    # Calculate memory requirements for each model
-    pipeline_memory = sum(p.numel() * p.element_size() for p in pipeline.parameters()) / (1024**3)  # GB
+    # Calculate memory requirements for each model component
+    pipeline_memory = 0
+    if hasattr(pipeline, 'transformer'):
+        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.transformer.parameters()) / (1024**3)
+    if hasattr(pipeline, 'vae'):
+        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.vae.parameters()) / (1024**3)
+    if hasattr(pipeline, 'text_encoder'):
+        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.text_encoder.parameters()) / (1024**3)
+    
     if latent_upsampler:
         upsampler_memory = sum(p.numel() * p.element_size() for p in latent_upsampler.parameters()) / (1024**3)  # GB
     else:
         upsampler_memory = 0
     
+    print(f"Pipeline memory requirement: {pipeline_memory:.2f}GB")
+    if latent_upsampler:
+        print(f"Latent upsampler memory requirement: {upsampler_memory:.2f}GB")
+    
     # Sort GPUs by free memory
     available_gpus.sort(key=lambda x: x['free_memory'], reverse=True)
     
     # Move pipeline to GPU with most free memory
-    pipeline.to(f"cuda:{available_gpus[0]['id']}")
+    target_gpu = f"cuda:{available_gpus[0]['id']}"
+    print(f"Moving pipeline to {target_gpu}")
+    pipeline.to(target_gpu)
     
     # If we have a latent upsampler and more than one GPU, move it to the second GPU
     if latent_upsampler and len(available_gpus) > 1:
-        latent_upsampler.to(f"cuda:{available_gpus[1]['id']}")
+        target_gpu = f"cuda:{available_gpus[1]['id']}"
+        print(f"Moving latent upsampler to {target_gpu}")
+        latent_upsampler.to(target_gpu)
     
     return pipeline, latent_upsampler
 print("Distributing models across available GPUs...")
