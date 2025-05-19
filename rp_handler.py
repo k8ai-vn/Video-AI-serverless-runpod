@@ -1,5 +1,8 @@
 from fastvideo import VideoGenerator
-
+import os
+NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/runpod-volume')
+MODEL_CACHE_PATH = os.path.join(NETWORK_STORAGE_PATH, 'model_cache')
+OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 def main():
     # Create a video generator with a pre-trained model
     generator = VideoGenerator.from_pretrained(
