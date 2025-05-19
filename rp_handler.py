@@ -79,7 +79,7 @@ def worker(rank, world_size, event):
 
         # Initialize pipeline config
         config = PipelineConfig.from_pretrained(MODEL_NAME)
-        config.num_gpus = world_size
+        # config.num_gpus = world_size
         config.vae_config.vae_precision = "fp32"
 
         # Create video generator
