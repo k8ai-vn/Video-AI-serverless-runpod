@@ -1,5 +1,6 @@
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
+# Base image sets HuggingFace cache directory to use Runpod's shared cache for efficiency:
 ENV HF_HOME="/runpod-volume/.cache/huggingface/"
 ENV PYTHONUNBUFFERED=1
 
@@ -21,22 +22,22 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
 
 WORKDIR /workspace
 
-# Copy requirements
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt /workspace/requirements.txt
 
 # Install Python packages
 RUN pip install --upgrade pip && \
     pip install -r /workspace/requirements.txt
 
-# Install flash-attention
+# Install flash-attention from source
 ENV FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE
 RUN pip install packaging ninja && \
     git clone https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention && \
     pip install . --no-build-isolation
 
-# Copy application
+# Copy the rest of the application
 COPY . /workspace
 
-# Run the serverless handler
-CMD ["python", "-u", "rp_handler.py"]
+# Set up the entrypoint
+CMD [ "python", "-u", "rp_handler.py" ] 
