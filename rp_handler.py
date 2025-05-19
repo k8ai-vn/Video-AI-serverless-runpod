@@ -70,11 +70,6 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         return False
     return True
 
-# Create a video generator with a pre-trained model
-generator = VideoGenerator.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-    num_gpus=2,  # Adjust based on your hardware
-)
 
 
 def handler(event):
@@ -116,4 +111,10 @@ def handler(event):
 
 # Start the Serverless function when the script is run
 if __name__ == '__main__':
+    # Create a video generator with a pre-trained model
+    generator = VideoGenerator.from_pretrained(
+        "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        num_gpus=2,  # Adjust based on your hardware
+    )
+
     runpod.serverless.start({'handler': handler })
