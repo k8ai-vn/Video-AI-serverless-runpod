@@ -27,7 +27,7 @@ import os
 # os.environ["HF_HOME"] = "/workspace"
 
 # config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
-config_file_path = "configs/ltxv-13b-0.9.7-dev"
+config_file_path = "configs/ltxv-13b-0.9.7-dev.yaml"
 
 with open(config_file_path, "r") as file:
     PIPELINE_CONFIG_YAML = yaml.safe_load(file)
