@@ -24,7 +24,7 @@ from inference import (
 from ltx_video.pipelines.pipeline_ltx_video import ConditioningItem, LTXMultiScalePipeline, LTXVideoPipeline
 from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 # Tối ưu hóa bộ nhớ ngay từ đầu
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
 with open(config_file_path, "r") as file:
