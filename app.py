@@ -42,6 +42,22 @@ latent_upsampler_instance = None
 models_dir = "downloaded_models_gradio_cpu_init"
 Path(models_dir).mkdir(parents=True, exist_ok=True)
 
+def get_available_gpus():
+    """Get list of available GPUs and their memory info"""
+    if not torch.cuda.is_available():
+        return []
+    
+    gpu_info = []
+    for i in range(torch.cuda.device_count()):
+        gpu = torch.cuda.get_device_properties(i)
+        gpu_info.append({
+            'id': i,
+            'name': gpu.name,
+            'total_memory': gpu.total_memory / (1024**3),  # Convert to GB
+            'free_memory': torch.cuda.memory_reserved(i) / (1024**3)  # Convert to GB
+        })
+    return gpu_info
+
 # Get available GPUs
 available_gpus = get_available_gpus()
 if not available_gpus:
@@ -510,21 +526,6 @@ with gr.Blocks(css=css) as demo:
     i2v_button.click(fn=generate, inputs=i2v_inputs, outputs=[output_video, seed_input], api_name="image_to_video")
     v2v_button.click(fn=generate, inputs=v2v_inputs, outputs=[output_video, seed_input], api_name="video_to_video")
 
-def get_available_gpus():
-    """Get list of available GPUs and their memory info"""
-    if not torch.cuda.is_available():
-        return []
-    
-    gpu_info = []
-    for i in range(torch.cuda.device_count()):
-        gpu = torch.cuda.get_device_properties(i)
-        gpu_info.append({
-            'id': i,
-            'name': gpu.name,
-            'total_memory': gpu.total_memory / (1024**3),  # Convert to GB
-            'free_memory': torch.cuda.memory_reserved(i) / (1024**3)  # Convert to GB
-        })
-    return gpu_info
 
 def distribute_models_to_gpus(pipeline, latent_upsampler=None):
     """Distribute models across available GPUs"""
