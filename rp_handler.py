@@ -21,6 +21,7 @@ OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
+
 # MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 
