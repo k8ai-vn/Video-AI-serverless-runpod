@@ -24,7 +24,7 @@ from inference import (
 from ltx_video.pipelines.pipeline_ltx_video import ConditioningItem, LTXMultiScalePipeline, LTXVideoPipeline
 from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 # Tối ưu hóa bộ nhớ ngay từ đầu
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
 with open(config_file_path, "r") as file:
@@ -41,34 +41,6 @@ pipeline_instance = None
 latent_upsampler_instance = None
 models_dir = "downloaded_models_gradio_cpu_init"
 Path(models_dir).mkdir(parents=True, exist_ok=True)
-
-def get_available_gpus():
-    """Get list of available GPUs and their memory info"""
-    if not torch.cuda.is_available():
-        return []
-    
-    gpu_info = []
-    for i in range(torch.cuda.device_count()):
-        gpu = torch.cuda.get_device_properties(i)
-        gpu_info.append({
-            'id': i,
-            'name': gpu.name,
-            'total_memory': gpu.total_memory / (1024**3),  # Convert to GB
-            'free_memory': torch.cuda.memory_reserved(i) / (1024**3)  # Convert to GB
-        })
-    return gpu_info
-
-# Get available GPUs
-available_gpus = get_available_gpus()
-if not available_gpus:
-    print("No CUDA GPUs available. Using CPU.")
-    target_inference_device = "cpu"
-else:
-    print(f"Found {len(available_gpus)} GPUs:")
-    for gpu in available_gpus:
-        print(f"GPU {gpu['id']}: {gpu['name']} - Total: {gpu['total_memory']:.1f}GB, Free: {gpu['free_memory']:.1f}GB")
-    # Use the first GPU for now, we'll implement multi-GPU support later
-    target_inference_device = f"cuda:{available_gpus[0]['id']}"
 
 print("Downloading models (if not present)...")
 distilled_model_actual_path = hf_hub_download(
@@ -110,58 +82,6 @@ if PIPELINE_CONFIG_YAML.get("spatial_upscaler_model_path"):
         device="cpu"
     )
     print("Latent upsampler created on CPU.")
-
-# Distribute models across available GPUs
-
-def distribute_models_to_gpus(pipeline, latent_upsampler=None):
-    """Distribute models across available GPUs"""
-    if not torch.cuda.is_available():
-        return pipeline, latent_upsampler
-    
-    available_gpus = get_available_gpus()
-    if len(available_gpus) < 2:
-        # If only one GPU, keep everything on that GPU
-        return pipeline, latent_upsampler
-    
-    # Calculate memory requirements for each model component
-    pipeline_memory = 0
-    if hasattr(pipeline, 'transformer'):
-        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.transformer.parameters()) / (1024**3)
-    if hasattr(pipeline, 'vae'):
-        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.vae.parameters()) / (1024**3)
-    if hasattr(pipeline, 'text_encoder'):
-        pipeline_memory += sum(p.numel() * p.element_size() for p in pipeline.text_encoder.parameters()) / (1024**3)
-    
-    if latent_upsampler:
-        upsampler_memory = sum(p.numel() * p.element_size() for p in latent_upsampler.parameters()) / (1024**3)  # GB
-    else:
-        upsampler_memory = 0
-    
-    print(f"Pipeline memory requirement: {pipeline_memory:.2f}GB")
-    if latent_upsampler:
-        print(f"Latent upsampler memory requirement: {upsampler_memory:.2f}GB")
-    
-    # Sort GPUs by free memory
-    available_gpus.sort(key=lambda x: x['free_memory'], reverse=True)
-    
-    # Move pipeline to GPU with most free memory
-    target_gpu = f"cuda:{available_gpus[0]['id']}"
-    print(f"Moving pipeline to {target_gpu}")
-    pipeline.to(target_gpu)
-    
-    # If we have a latent upsampler and more than one GPU, move it to the second GPU
-    if latent_upsampler and len(available_gpus) > 1:
-        target_gpu = f"cuda:{available_gpus[1]['id']}"
-        print(f"Moving latent upsampler to {target_gpu}")
-        latent_upsampler.to(target_gpu)
-    
-    return pipeline, latent_upsampler
-print("Distributing models across available GPUs...")
-pipeline_instance, latent_upsampler_instance = distribute_models_to_gpus(
-    pipeline_instance, 
-    latent_upsampler_instance
-)
-print("Models distributed across GPUs.")
 
 target_inference_device = "cuda"
 print(f"Target inference device: {target_inference_device}")
@@ -233,15 +153,6 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
     if randomize_seed:
         seed_ui = random.randint(0, 2**32 - 1)
     seed_everething(int(seed_ui))
-    
-    # Get available GPUs
-    available_gpus = get_available_gpus()
-    if not available_gpus:
-        raise gr.Error("No CUDA GPUs available")
-    
-    # Use the GPU with most free memory for inference
-    available_gpus.sort(key=lambda x: x['free_memory'], reverse=True)
-    target_inference_device = f"cuda:{available_gpus[0]['id']}"
     
     target_frames_ideal = duration_ui * FPS
     target_frames_rounded = round(target_frames_ideal)
@@ -569,8 +480,6 @@ with gr.Blocks(css=css) as demo:
     t2v_button.click(fn=generate, inputs=t2v_inputs, outputs=[output_video, seed_input], api_name="text_to_video")
     i2v_button.click(fn=generate, inputs=i2v_inputs, outputs=[output_video, seed_input], api_name="image_to_video")
     v2v_button.click(fn=generate, inputs=v2v_inputs, outputs=[output_video, seed_input], api_name="video_to_video")
-
-
 
 if __name__ == "__main__":
     if os.path.exists(models_dir) and os.path.isdir(models_dir):
