@@ -1,7 +1,7 @@
 # import runpod
 # import time  
 # from fastvideo import VideoGenerator
-# import os
+import os
 # import boto3
 # import datetime
 # import random
