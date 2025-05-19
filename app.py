@@ -259,7 +259,11 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
 
 
         second_pass_args = PIPELINE_CONFIG_YAML.get("second_pass", {}).copy()
-        second_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
+        # Handle ui_guidance_scale which might be a list or a single value
+        if isinstance(ui_guidance_scale, list):
+            second_pass_args["guidance_scale"] = float(ui_guidance_scale[0]) if ui_guidance_scale else PIPELINE_CONFIG_YAML.get("second_pass", {}).get("guidance_scale", 7.5)
+        else:
+            second_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
         # num_inference_steps will be derived from len(timesteps) in the pipeline
         second_pass_args.pop("num_inference_steps", None)
         
