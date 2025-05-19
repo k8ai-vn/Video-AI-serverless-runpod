@@ -1,9 +1,3 @@
-# runpod
-# fastvideo
-# boto3
-# torch
-torch
-torchvision
 fastvideo
 runpod
 boto3
