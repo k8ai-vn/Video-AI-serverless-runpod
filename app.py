@@ -11,6 +11,11 @@ import tempfile
 from PIL import Image
 from huggingface_hub import hf_hub_download
 import shutil
+import gc
+import warnings
+
+# Suppress specific PyTorch warnings
+warnings.filterwarnings("ignore", message="torch.meshgrid: in an upcoming release")
 
 from inference import (
     create_ltx_video_pipeline,
@@ -24,33 +29,47 @@ from inference import (
 from ltx_video.pipelines.pipeline_ltx_video import ConditioningItem, LTXMultiScalePipeline, LTXVideoPipeline
 from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 
-# Tối ưu hóa bộ nhớ ngay từ đầu
+# Optimize memory from the start
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-torch.cuda.empty_cache()
 
-# Kiểm tra và chọn GPU có nhiều bộ nhớ trống nhất
+# Check and select GPU with the most free memory
 def get_best_gpu():
     if not torch.cuda.is_available():
         return "cpu"
     
-    num_gpus = torch.cuda.device_count()
-    if num_gpus == 1:
-        return "cuda:0"
-    
-    # Tìm GPU có nhiều bộ nhớ trống nhất
-    max_free_memory = 0
-    best_gpu_id = 0
-    
-    for gpu_id in range(num_gpus):
-        torch.cuda.set_device(gpu_id)
-        torch.cuda.empty_cache()
-        free_memory = torch.cuda.get_device_properties(gpu_id).total_memory - torch.cuda.memory_allocated(gpu_id)
-        if free_memory > max_free_memory:
-            max_free_memory = free_memory
-            best_gpu_id = gpu_id
-    
-    print(f"Selected GPU {best_gpu_id} with {max_free_memory/1024**3:.2f} GB free memory")
-    return f"cuda:{best_gpu_id}"
+    try:
+        num_gpus = torch.cuda.device_count()
+        if num_gpus == 1:
+            # For single GPU, clear cache and return
+            torch.cuda.empty_cache()
+            gc.collect()
+            return "cuda:0"
+        
+        # Find GPU with most free memory
+        max_free_memory = 0
+        best_gpu_id = 0
+        
+        for gpu_id in range(num_gpus):
+            try:
+                # Set device before clearing cache
+                torch.cuda.set_device(gpu_id)
+                torch.cuda.empty_cache()
+                gc.collect()
+                
+                # Get memory stats
+                free_memory = torch.cuda.get_device_properties(gpu_id).total_memory - torch.cuda.memory_allocated(gpu_id)
+                if free_memory > max_free_memory:
+                    max_free_memory = free_memory
+                    best_gpu_id = gpu_id
+            except RuntimeError as e:
+                print(f"Error checking GPU {gpu_id}: {e}")
+                continue
+        
+        print(f"Selected GPU {best_gpu_id} with {max_free_memory/1024**3:.2f} GB free memory")
+        return f"cuda:{best_gpu_id}"
+    except Exception as e:
+        print(f"Error selecting GPU, falling back to CPU: {e}")
+        return "cpu"
 
 config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
 with open(config_file_path, "r") as file:
@@ -109,12 +128,34 @@ if PIPELINE_CONFIG_YAML.get("spatial_upscaler_model_path"):
     )
     print("Latent upsampler created on CPU.")
 
-target_inference_device = get_best_gpu()
-print(f"Target inference device: {target_inference_device}")
-pipeline_instance.to(target_inference_device)
-if latent_upsampler_instance: 
-    latent_upsampler_instance.to(target_inference_device)
-torch.cuda.empty_cache()
+try:
+    target_inference_device = get_best_gpu()
+    print(f"Target inference device: {target_inference_device}")
+    
+    # Move models to target device safely
+    if target_inference_device != "cpu":
+        # Move pipeline components one by one to avoid OOM
+        for name, module in pipeline_instance.components.items():
+            try:
+                if hasattr(module, 'to'):
+                    module.to(target_inference_device)
+                    torch.cuda.empty_cache()
+                    gc.collect()
+            except Exception as e:
+                print(f"Warning: Could not move {name} to {target_inference_device}: {e}")
+                
+        # Move latent upsampler if available
+        if latent_upsampler_instance:
+            try:
+                latent_upsampler_instance.to(target_inference_device)
+            except Exception as e:
+                print(f"Warning: Could not move latent upsampler to {target_inference_device}: {e}")
+                
+    torch.cuda.empty_cache()
+    gc.collect()
+except Exception as e:
+    print(f"Error moving models to GPU: {e}. Using CPU instead.")
+    target_inference_device = "cpu"
 
 
 # --- Helper function for dimension calculation ---
@@ -177,189 +218,282 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
              seed_ui, randomize_seed, ui_guidance_scale, improve_texture_flag,
              progress=gr.Progress(track_tqdm=True)):
 
-    # Chọn GPU tốt nhất cho mỗi lần inference
-    inference_device = get_best_gpu()
-    print(f"Using {inference_device} for this inference run")
-    
-    # Di chuyển models đến GPU được chọn
-    pipeline_instance.to(inference_device)
-    if latent_upsampler_instance:
-        latent_upsampler_instance.to(inference_device)
-    torch.cuda.empty_cache()
-
-    if randomize_seed:
-        seed_ui = random.randint(0, 2**32 - 1)
-    seed_everething(int(seed_ui))
-    
-    target_frames_ideal = duration_ui * FPS
-    target_frames_rounded = round(target_frames_ideal)
-    if target_frames_rounded < 1: 
-        target_frames_rounded = 1
-    
-    n_val = round((float(target_frames_rounded) - 1.0) / 8.0)
-    actual_num_frames = int(n_val * 8 + 1)
-
-    actual_num_frames = max(9, actual_num_frames)
-    actual_num_frames = min(MAX_NUM_FRAMES, actual_num_frames)
-    
-    actual_height = int(height_ui)
-    actual_width = int(width_ui)
-
-    height_padded = ((actual_height - 1) // 32 + 1) * 32
-    width_padded = ((actual_width - 1) // 32 + 1) * 32
-    num_frames_padded = ((actual_num_frames - 2) // 8 + 1) * 8 + 1 
-    if num_frames_padded != actual_num_frames:
-        print(f"Warning: actual_num_frames ({actual_num_frames}) and num_frames_padded ({num_frames_padded}) differ. Using num_frames_padded for pipeline.")
-    
-    padding_values = calculate_padding(actual_height, actual_width, height_padded, width_padded)
-
-    call_kwargs = {
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "height": height_padded,
-        "width": width_padded,
-        "num_frames": num_frames_padded, 
-        "frame_rate": int(FPS), 
-        "generator": torch.Generator(device=inference_device).manual_seed(int(seed_ui)),
-        "output_type": "pt", 
-        "conditioning_items": None,
-        "media_items": None,
-        "decode_timestep": PIPELINE_CONFIG_YAML["decode_timestep"],
-        "decode_noise_scale": PIPELINE_CONFIG_YAML["decode_noise_scale"],
-        "stochastic_sampling": PIPELINE_CONFIG_YAML["stochastic_sampling"],
-        "image_cond_noise_scale": 0.15,
-        "is_video": True,
-        "vae_per_channel_normalize": True,
-        "mixed_precision": (PIPELINE_CONFIG_YAML["precision"] == "mixed_precision"),
-        "offload_to_cpu": False,
-        "enhance_prompt": False,
-    }
-
-    stg_mode_str = PIPELINE_CONFIG_YAML.get("stg_mode", "attention_values")
-    if stg_mode_str.lower() in ["stg_av", "attention_values"]:
-        call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.AttentionValues
-    elif stg_mode_str.lower() in ["stg_as", "attention_skip"]:
-        call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.AttentionSkip
-    elif stg_mode_str.lower() in ["stg_r", "residual"]:
-        call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.Residual
-    elif stg_mode_str.lower() in ["stg_t", "transformer_block"]:
-        call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.TransformerBlock
-    else:
-        raise ValueError(f"Invalid stg_mode: {stg_mode_str}")
-
-    if mode == "image-to-video" and input_image_filepath:
-        try:
-            media_tensor = load_image_to_tensor_with_resize_and_crop(
-                input_image_filepath, actual_height, actual_width
-            )
-            media_tensor = torch.nn.functional.pad(media_tensor, padding_values)
-            call_kwargs["conditioning_items"] = [ConditioningItem(media_tensor.to(inference_device), 0, 1.0)]
-        except Exception as e:
-            print(f"Error loading image {input_image_filepath}: {e}")
-            raise gr.Error(f"Could not load image: {e}")
-    elif mode == "video-to-video" and input_video_filepath:
-        try:
-            call_kwargs["media_items"] = load_media_file(
-                media_path=input_video_filepath,
-                height=actual_height, 
-                width=actual_width,
-                max_frames=int(ui_frames_to_use), 
-                padding=padding_values
-            ).to(inference_device)
-        except Exception as e:
-            print(f"Error loading video {input_video_filepath}: {e}")
-            raise gr.Error(f"Could not load video: {e}")
-
-    print(f"Moving models to {inference_device} for inference (if not already there)...")
-    torch.cuda.empty_cache()
-    
-    active_latent_upsampler = None
-    if improve_texture_flag and latent_upsampler_instance:
-        active_latent_upsampler = latent_upsampler_instance
-
-    result_images_tensor = None
-    if improve_texture_flag:
-        if not active_latent_upsampler:
-            raise gr.Error("Spatial upscaler model not loaded or improve_texture not selected, cannot use multi-scale.")
-        
-        multi_scale_pipeline_obj = LTXMultiScalePipeline(pipeline_instance, active_latent_upsampler)
-        
-        first_pass_args = PIPELINE_CONFIG_YAML.get("first_pass", {}).copy()
-        first_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
-        # num_inference_steps will be derived from len(timesteps) in the pipeline
-        first_pass_args.pop("num_inference_steps", None)
-
-
-        second_pass_args = PIPELINE_CONFIG_YAML.get("second_pass", {}).copy()
-        second_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
-        # num_inference_steps will be derived from len(timesteps) in the pipeline
-        second_pass_args.pop("num_inference_steps", None)
-        
-        multi_scale_call_kwargs = call_kwargs.copy()
-        multi_scale_call_kwargs.update({
-            "downscale_factor": PIPELINE_CONFIG_YAML["downscale_factor"],
-            "first_pass": first_pass_args,
-            "second_pass": second_pass_args,
-        })
-        
-        print(f"Calling multi-scale pipeline (eff. HxW: {actual_height}x{actual_width}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
-        result_images_tensor = multi_scale_pipeline_obj(**multi_scale_call_kwargs).images
-    else:
-        single_pass_call_kwargs = call_kwargs.copy()
-        first_pass_config_from_yaml = PIPELINE_CONFIG_YAML.get("first_pass", {})
-
-        single_pass_call_kwargs["timesteps"] = first_pass_config_from_yaml.get("timesteps")
-        single_pass_call_kwargs["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
-        single_pass_call_kwargs["stg_scale"] = first_pass_config_from_yaml.get("stg_scale")
-        single_pass_call_kwargs["rescaling_scale"] = first_pass_config_from_yaml.get("rescaling_scale")
-        single_pass_call_kwargs["skip_block_list"] = first_pass_config_from_yaml.get("skip_block_list")
-        
-        # Remove keys that might conflict or are not used in single pass / handled by above
-        single_pass_call_kwargs.pop("num_inference_steps", None) 
-        single_pass_call_kwargs.pop("first_pass", None) 
-        single_pass_call_kwargs.pop("second_pass", None)
-        single_pass_call_kwargs.pop("downscale_factor", None)
-        
-        print(f"Calling base pipeline (padded HxW: {height_padded}x{width_padded}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
-        result_images_tensor = pipeline_instance(**single_pass_call_kwargs).images
-
-    if result_images_tensor is None:
-        raise gr.Error("Generation failed.")
-
-    pad_left, pad_right, pad_top, pad_bottom = padding_values
-    slice_h_end = -pad_bottom if pad_bottom > 0 else None
-    slice_w_end = -pad_right if pad_right > 0 else None
-    
-    result_images_tensor = result_images_tensor[
-        :, :, :actual_num_frames, pad_top:slice_h_end, pad_left:slice_w_end
-    ]
-
-    video_np = result_images_tensor[0].permute(1, 2, 3, 0).cpu().float().numpy()
-    
-    video_np = np.clip(video_np, 0, 1) 
-    video_np = (video_np * 255).astype(np.uint8)
-
-    temp_dir = tempfile.mkdtemp()
-    timestamp = random.randint(10000,99999)
-    output_video_path = os.path.join(temp_dir, f"output_{timestamp}.mp4")
-    
     try:
-        with imageio.get_writer(output_video_path, fps=call_kwargs["frame_rate"], macro_block_size=1) as video_writer:
-            for frame_idx in range(video_np.shape[0]):
-                progress(frame_idx / video_np.shape[0], desc="Saving video")
-                video_writer.append_data(video_np[frame_idx])
-    except Exception as e:
-        print(f"Error saving video with macro_block_size=1: {e}")
+        # Select best GPU for each inference run
+        inference_device = get_best_gpu()
+        print(f"Using {inference_device} for this inference run")
+        
+        # Move models to selected GPU safely
+        if inference_device != "cpu":
+            try:
+                # Move pipeline components one by one
+                for name, module in pipeline_instance.components.items():
+                    if hasattr(module, 'to'):
+                        module.to(inference_device)
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                
+                # Move latent upsampler if available and needed
+                if latent_upsampler_instance and improve_texture_flag:
+                    latent_upsampler_instance.to(inference_device)
+                    torch.cuda.empty_cache()
+                    gc.collect()
+            except Exception as e:
+                print(f"Error moving models to {inference_device}: {e}. Falling back to CPU.")
+                inference_device = "cpu"
+                pipeline_instance.to("cpu")
+                if latent_upsampler_instance:
+                    latent_upsampler_instance.to("cpu")
+
+        if randomize_seed:
+            seed_ui = random.randint(0, 2**32 - 1)
+        seed_everething(int(seed_ui))
+        
+        target_frames_ideal = duration_ui * FPS
+        target_frames_rounded = round(target_frames_ideal)
+        if target_frames_rounded < 1: 
+            target_frames_rounded = 1
+        
+        n_val = round((float(target_frames_rounded) - 1.0) / 8.0)
+        actual_num_frames = int(n_val * 8 + 1)
+
+        actual_num_frames = max(9, actual_num_frames)
+        actual_num_frames = min(MAX_NUM_FRAMES, actual_num_frames)
+        
+        actual_height = int(height_ui)
+        actual_width = int(width_ui)
+
+        height_padded = ((actual_height - 1) // 32 + 1) * 32
+        width_padded = ((actual_width - 1) // 32 + 1) * 32
+        num_frames_padded = ((actual_num_frames - 2) // 8 + 1) * 8 + 1 
+        if num_frames_padded != actual_num_frames:
+            print(f"Warning: actual_num_frames ({actual_num_frames}) and num_frames_padded ({num_frames_padded}) differ. Using num_frames_padded for pipeline.")
+        
+        padding_values = calculate_padding(actual_height, actual_width, height_padded, width_padded)
+
+        call_kwargs = {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "height": height_padded,
+            "width": width_padded,
+            "num_frames": num_frames_padded, 
+            "frame_rate": int(FPS), 
+            "generator": torch.Generator(device=inference_device).manual_seed(int(seed_ui)),
+            "output_type": "pt", 
+            "conditioning_items": None,
+            "media_items": None,
+            "decode_timestep": PIPELINE_CONFIG_YAML["decode_timestep"],
+            "decode_noise_scale": PIPELINE_CONFIG_YAML["decode_noise_scale"],
+            "stochastic_sampling": PIPELINE_CONFIG_YAML["stochastic_sampling"],
+            "image_cond_noise_scale": 0.15,
+            "is_video": True,
+            "vae_per_channel_normalize": True,
+            "mixed_precision": (PIPELINE_CONFIG_YAML["precision"] == "mixed_precision"),
+            "offload_to_cpu": False,
+            "enhance_prompt": False,
+        }
+
+        stg_mode_str = PIPELINE_CONFIG_YAML.get("stg_mode", "attention_values")
+        if stg_mode_str.lower() in ["stg_av", "attention_values"]:
+            call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.AttentionValues
+        elif stg_mode_str.lower() in ["stg_as", "attention_skip"]:
+            call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.AttentionSkip
+        elif stg_mode_str.lower() in ["stg_r", "residual"]:
+            call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.Residual
+        elif stg_mode_str.lower() in ["stg_t", "transformer_block"]:
+            call_kwargs["skip_layer_strategy"] = SkipLayerStrategy.TransformerBlock
+        else:
+            raise ValueError(f"Invalid stg_mode: {stg_mode_str}")
+
+        if mode == "image-to-video" and input_image_filepath:
+            try:
+                media_tensor = load_image_to_tensor_with_resize_and_crop(
+                    input_image_filepath, actual_height, actual_width
+                )
+                media_tensor = torch.nn.functional.pad(media_tensor, padding_values)
+                call_kwargs["conditioning_items"] = [ConditioningItem(media_tensor.to(inference_device), 0, 1.0)]
+            except Exception as e:
+                print(f"Error loading image {input_image_filepath}: {e}")
+                raise gr.Error(f"Could not load image: {e}")
+        elif mode == "video-to-video" and input_video_filepath:
+            try:
+                call_kwargs["media_items"] = load_media_file(
+                    media_path=input_video_filepath,
+                    height=actual_height, 
+                    width=actual_width,
+                    max_frames=int(ui_frames_to_use), 
+                    padding=padding_values
+                ).to(inference_device)
+            except Exception as e:
+                print(f"Error loading video {input_video_filepath}: {e}")
+                raise gr.Error(f"Could not load video: {e}")
+
+        # Clear cache before inference
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+        active_latent_upsampler = None
+        if improve_texture_flag and latent_upsampler_instance:
+            active_latent_upsampler = latent_upsampler_instance
+
+        result_images_tensor = None
         try:
-            with imageio.get_writer(output_video_path, fps=call_kwargs["frame_rate"], format='FFMPEG', codec='libx264', quality=8) as video_writer:
-                 for frame_idx in range(video_np.shape[0]):
-                    progress(frame_idx / video_np.shape[0], desc="Saving video (fallback ffmpeg)")
-                    video_writer.append_data(video_np[frame_idx])
-        except Exception as e2:
-            print(f"Fallback video saving error: {e2}")
-            raise gr.Error(f"Failed to save video: {e2}")
+            if improve_texture_flag:
+                if not active_latent_upsampler:
+                    raise gr.Error("Spatial upscaler model not loaded or improve_texture not selected, cannot use multi-scale.")
+                
+                multi_scale_pipeline_obj = LTXMultiScalePipeline(pipeline_instance, active_latent_upsampler)
+                
+                first_pass_args = PIPELINE_CONFIG_YAML.get("first_pass", {}).copy()
+                first_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
+                # num_inference_steps will be derived from len(timesteps) in the pipeline
+                first_pass_args.pop("num_inference_steps", None)
+
+                second_pass_args = PIPELINE_CONFIG_YAML.get("second_pass", {}).copy()
+                second_pass_args["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
+                # num_inference_steps will be derived from len(timesteps) in the pipeline
+                second_pass_args.pop("num_inference_steps", None)
+                
+                multi_scale_call_kwargs = call_kwargs.copy()
+                multi_scale_call_kwargs.update({
+                    "downscale_factor": PIPELINE_CONFIG_YAML["downscale_factor"],
+                    "first_pass": first_pass_args,
+                    "second_pass": second_pass_args,
+                })
+                
+                print(f"Calling multi-scale pipeline (eff. HxW: {actual_height}x{actual_width}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
+                with torch.inference_mode():
+                    result_images_tensor = multi_scale_pipeline_obj(**multi_scale_call_kwargs).images
+            else:
+                single_pass_call_kwargs = call_kwargs.copy()
+                first_pass_config_from_yaml = PIPELINE_CONFIG_YAML.get("first_pass", {})
+
+                single_pass_call_kwargs["timesteps"] = first_pass_config_from_yaml.get("timesteps")
+                single_pass_call_kwargs["guidance_scale"] = float(ui_guidance_scale) # UI overrides YAML
+                single_pass_call_kwargs["stg_scale"] = first_pass_config_from_yaml.get("stg_scale")
+                single_pass_call_kwargs["rescaling_scale"] = first_pass_config_from_yaml.get("rescaling_scale")
+                single_pass_call_kwargs["skip_block_list"] = first_pass_config_from_yaml.get("skip_block_list")
+                
+                # Remove keys that might conflict or are not used in single pass / handled by above
+                single_pass_call_kwargs.pop("num_inference_steps", None) 
+                single_pass_call_kwargs.pop("first_pass", None) 
+                single_pass_call_kwargs.pop("second_pass", None)
+                single_pass_call_kwargs.pop("downscale_factor", None)
+                
+                print(f"Calling base pipeline (padded HxW: {height_padded}x{width_padded}, Frames: {actual_num_frames} -> Padded: {num_frames_padded}) on {inference_device}")
+                with torch.inference_mode():
+                    result_images_tensor = pipeline_instance(**single_pass_call_kwargs).images
+        except torch.cuda.OutOfMemoryError as e:
+            # Handle OOM error by trying to free memory and retry with smaller dimensions
+            print(f"CUDA OOM error: {e}. Trying to recover...")
+            torch.cuda.empty_cache()
+            gc.collect()
             
-    return output_video_path, seed_ui
+            # If we're using multi-scale, try single-scale instead
+            if improve_texture_flag:
+                print("Falling back to single-scale generation due to OOM")
+                improve_texture_flag = False
+                
+                # Retry with single-scale
+                single_pass_call_kwargs = call_kwargs.copy()
+                first_pass_config_from_yaml = PIPELINE_CONFIG_YAML.get("first_pass", {})
+
+                single_pass_call_kwargs["timesteps"] = first_pass_config_from_yaml.get("timesteps")
+                single_pass_call_kwargs["guidance_scale"] = float(ui_guidance_scale)
+                single_pass_call_kwargs["stg_scale"] = first_pass_config_from_yaml.get("stg_scale")
+                single_pass_call_kwargs["rescaling_scale"] = first_pass_config_from_yaml.get("rescaling_scale")
+                single_pass_call_kwargs["skip_block_list"] = first_pass_config_from_yaml.get("skip_block_list")
+                
+                single_pass_call_kwargs.pop("num_inference_steps", None)
+                single_pass_call_kwargs.pop("first_pass", None)
+                single_pass_call_kwargs.pop("second_pass", None)
+                single_pass_call_kwargs.pop("downscale_factor", None)
+                
+                with torch.inference_mode():
+                    result_images_tensor = pipeline_instance(**single_pass_call_kwargs).images
+            else:
+                # If already using single-scale, try with CPU
+                print("Falling back to CPU due to GPU OOM")
+                pipeline_instance.to("cpu")
+                if latent_upsampler_instance:
+                    latent_upsampler_instance.to("cpu")
+                
+                # Update device references in call_kwargs
+                call_kwargs["generator"] = torch.Generator(device="cpu").manual_seed(int(seed_ui))
+                if call_kwargs["conditioning_items"]:
+                    call_kwargs["conditioning_items"] = [
+                        ConditioningItem(item.conditioning_tensor.to("cpu"), item.start_frame, item.strength)
+                        for item in call_kwargs["conditioning_items"]
+                    ]
+                if call_kwargs["media_items"] is not None:
+                    call_kwargs["media_items"] = call_kwargs["media_items"].to("cpu")
+                
+                # Retry with CPU
+                single_pass_call_kwargs = call_kwargs.copy()
+                first_pass_config_from_yaml = PIPELINE_CONFIG_YAML.get("first_pass", {})
+                
+                single_pass_call_kwargs["timesteps"] = first_pass_config_from_yaml.get("timesteps")
+                single_pass_call_kwargs["guidance_scale"] = float(ui_guidance_scale)
+                single_pass_call_kwargs["stg_scale"] = first_pass_config_from_yaml.get("stg_scale")
+                single_pass_call_kwargs["rescaling_scale"] = first_pass_config_from_yaml.get("rescaling_scale")
+                single_pass_call_kwargs["skip_block_list"] = first_pass_config_from_yaml.get("skip_block_list")
+                
+                single_pass_call_kwargs.pop("num_inference_steps", None)
+                single_pass_call_kwargs.pop("first_pass", None)
+                single_pass_call_kwargs.pop("second_pass", None)
+                single_pass_call_kwargs.pop("downscale_factor", None)
+                
+                with torch.inference_mode():
+                    result_images_tensor = pipeline_instance(**single_pass_call_kwargs).images
+
+        if result_images_tensor is None:
+            raise gr.Error("Generation failed.")
+
+        pad_left, pad_right, pad_top, pad_bottom = padding_values
+        slice_h_end = -pad_bottom if pad_bottom > 0 else None
+        slice_w_end = -pad_right if pad_right > 0 else None
+        
+        result_images_tensor = result_images_tensor[
+            :, :, :actual_num_frames, pad_top:slice_h_end, pad_left:slice_w_end
+        ]
+
+        video_np = result_images_tensor[0].permute(1, 2, 3, 0).cpu().float().numpy()
+        
+        video_np = np.clip(video_np, 0, 1) 
+        video_np = (video_np * 255).astype(np.uint8)
+
+        temp_dir = tempfile.mkdtemp()
+        timestamp = random.randint(10000,99999)
+        output_video_path = os.path.join(temp_dir, f"output_{timestamp}.mp4")
+        
+        try:
+            with imageio.get_writer(output_video_path, fps=call_kwargs["frame_rate"], macro_block_size=1) as video_writer:
+                for frame_idx in range(video_np.shape[0]):
+                    progress(frame_idx / video_np.shape[0], desc="Saving video")
+                    video_writer.append_data(video_np[frame_idx])
+        except Exception as e:
+            print(f"Error saving video with macro_block_size=1: {e}")
+            try:
+                with imageio.get_writer(output_video_path, fps=call_kwargs["frame_rate"], format='FFMPEG', codec='libx264', quality=8) as video_writer:
+                     for frame_idx in range(video_np.shape[0]):
+                        progress(frame_idx / video_np.shape[0], desc="Saving video (fallback ffmpeg)")
+                        video_writer.append_data(video_np[frame_idx])
+            except Exception as e2:
+                print(f"Fallback video saving error: {e2}")
+                raise gr.Error(f"Failed to save video: {e2}")
+        
+        # Clean up memory
+        del result_images_tensor, video_np
+        torch.cuda.empty_cache()
+        gc.collect()
+            
+        return output_video_path, seed_ui
+    
+    except Exception as e:
+        import traceback
+        print(f"Error in generate function: {e}")
+        print(traceback.format_exc())
+        raise gr.Error(f"Generation failed: {str(e)}")
 
 def update_task_image():
     return "image-to-video"
