@@ -19,7 +19,7 @@ OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 # S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 # S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
 # # MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
-# MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
+MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 
 # # Create directories if they don't exist
 # os.makedirs(MODEL_CACHE_PATH, exist_ok=True)
@@ -130,8 +130,8 @@ def main():
 
     start_time = time.perf_counter()
     gen = VideoGenerator.from_pretrained(
-        model_path="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-        num_gpus=1,
+        model_path=MODEL_NAME,
+        num_gpus=2,
     )
     load_time = time.perf_counter() - start_time
     print(f"Model loading time: {load_time:.2f} seconds")
