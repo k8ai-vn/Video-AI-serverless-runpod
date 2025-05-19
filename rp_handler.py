@@ -1,5 +1,6 @@
 import runpod
 import time  
+from fastvideo import VideoGenerator
 import os
 import boto3
 import datetime
@@ -9,10 +10,6 @@ import string
 import logging
 from botocore.exceptions import ClientError
 from botocore.config import Config
-import torch
-print("CUDA available:", torch.cuda.is_available())
-print("Number of GPUs:", torch.cuda.device_count())
-print("GPU Name:", torch.cuda.get_device_name(0))
 
 # Define network storage paths
 NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/runpod-volume')
@@ -21,7 +18,6 @@ OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
-
 # MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 
@@ -74,6 +70,11 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         return False
     return True
 
+# Create a video generator with a pre-trained model
+generator = VideoGenerator.from_pretrained(
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    num_gpus=4,  # Adjust based on your hardware
+)
 
 
 def handler(event):
@@ -92,22 +93,8 @@ def handler(event):
     input = event['input']
     
     prompt = input.get('prompt')  
-    num_inference_steps = input.get('num_inference_steps', 30)
-    guidance_scale = input.get('guidance_scale', 7.5)
-    width = input.get('width', 1024)
-    height = input.get('height', 576)
-    # Override default configurations while keeping optimal defaults for other settings
-    generator = VideoGenerator.from_pretrained(MODEL_NAME, pipeline_config=config)
 
-    # Generation config
-    param = SamplingParam.from_pretrained(MODEL_NAME)
-    # Adjust specific sampling parameters
-    # Other arguments will be set to best defaults
-    param.num_inference_steps=num_inference_steps # higher quality
-    param.guidance_scale=guidance_scale # stronger guidance
-    param.width=width  # Higher resolution
-    param.height=height
-    
+
     # Define a prompt for your video
     # prompt = "A curious raccoon peers through a vibrant field of yellow sunflowers, its eyes wide with interest."
     output_path = input.get('output_path', os.path.join(OUTPUT_PATH, 'my_videos/'))
@@ -118,33 +105,15 @@ def handler(event):
     # Generate the video
     video = generator.generate_video(
         prompt,
-        sampling_param=param,
-        # return_frames=True,  # Also return frames from this call (defaults to False)
+        return_frames=True,  # Also return frames from this call (defaults to False)
         output_path=output_path,  # Controls where videos are saved
         save_video=True
     )
     os.rename(f"{output_path}{prompt}.mp4", f"{output_path}{video_file_name}")
     # Upload the video to S3
-    upload_file(f"{output_path}{video_file_name}", input.get('user_uuid', 'system_default'), S3_BUCKET, video_file_name)
+    upload_file(f"{output_path}{video_file_name}", input.get('user_uuid'), S3_BUCKET, video_file_name)
     return prompt
-
 
 # Start the Serverless function when the script is run
 if __name__ == '__main__':
-    
-    from fastvideo import VideoGenerator, SamplingParam, PipelineConfig
-
-    config = PipelineConfig.from_pretrained(MODEL_NAME)
-    # Can adjust any parameters
-    # Other arguments will be set to best defaults
-    config.num_gpus = 4 # how many GPUS to parallelize generation
-    config.vae_config.vae_precision = "fp32"
-
-    # Create a video generator with a pre-trained model
-    generator = VideoGenerator.from_pretrained(
-        MODEL_NAME,
-        pipeline_config=config
-        # num_gpus=4,  # Adjust based on your hardware
-    )
-
     runpod.serverless.start({'handler': handler })
