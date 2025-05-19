@@ -112,6 +112,35 @@ if PIPELINE_CONFIG_YAML.get("spatial_upscaler_model_path"):
     print("Latent upsampler created on CPU.")
 
 # Distribute models across available GPUs
+
+def distribute_models_to_gpus(pipeline, latent_upsampler=None):
+    """Distribute models across available GPUs"""
+    if not torch.cuda.is_available():
+        return pipeline, latent_upsampler
+    
+    available_gpus = get_available_gpus()
+    if len(available_gpus) < 2:
+        # If only one GPU, keep everything on that GPU
+        return pipeline, latent_upsampler
+    
+    # Calculate memory requirements for each model
+    pipeline_memory = sum(p.numel() * p.element_size() for p in pipeline.parameters()) / (1024**3)  # GB
+    if latent_upsampler:
+        upsampler_memory = sum(p.numel() * p.element_size() for p in latent_upsampler.parameters()) / (1024**3)  # GB
+    else:
+        upsampler_memory = 0
+    
+    # Sort GPUs by free memory
+    available_gpus.sort(key=lambda x: x['free_memory'], reverse=True)
+    
+    # Move pipeline to GPU with most free memory
+    pipeline.to(f"cuda:{available_gpus[0]['id']}")
+    
+    # If we have a latent upsampler and more than one GPU, move it to the second GPU
+    if latent_upsampler and len(available_gpus) > 1:
+        latent_upsampler.to(f"cuda:{available_gpus[1]['id']}")
+    
+    return pipeline, latent_upsampler
 print("Distributing models across available GPUs...")
 pipeline_instance, latent_upsampler_instance = distribute_models_to_gpus(
     pipeline_instance, 
@@ -527,34 +556,6 @@ with gr.Blocks(css=css) as demo:
     v2v_button.click(fn=generate, inputs=v2v_inputs, outputs=[output_video, seed_input], api_name="video_to_video")
 
 
-def distribute_models_to_gpus(pipeline, latent_upsampler=None):
-    """Distribute models across available GPUs"""
-    if not torch.cuda.is_available():
-        return pipeline, latent_upsampler
-    
-    available_gpus = get_available_gpus()
-    if len(available_gpus) < 2:
-        # If only one GPU, keep everything on that GPU
-        return pipeline, latent_upsampler
-    
-    # Calculate memory requirements for each model
-    pipeline_memory = sum(p.numel() * p.element_size() for p in pipeline.parameters()) / (1024**3)  # GB
-    if latent_upsampler:
-        upsampler_memory = sum(p.numel() * p.element_size() for p in latent_upsampler.parameters()) / (1024**3)  # GB
-    else:
-        upsampler_memory = 0
-    
-    # Sort GPUs by free memory
-    available_gpus.sort(key=lambda x: x['free_memory'], reverse=True)
-    
-    # Move pipeline to GPU with most free memory
-    pipeline.to(f"cuda:{available_gpus[0]['id']}")
-    
-    # If we have a latent upsampler and more than one GPU, move it to the second GPU
-    if latent_upsampler and len(available_gpus) > 1:
-        latent_upsampler.to(f"cuda:{available_gpus[1]['id']}")
-    
-    return pipeline, latent_upsampler
 
 if __name__ == "__main__":
     if os.path.exists(models_dir) and os.path.isdir(models_dir):
