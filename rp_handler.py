@@ -12,9 +12,9 @@
 # from botocore.config import Config
 
 # # Define network storage paths
-# NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/runpod-volume')
-# MODEL_CACHE_PATH = os.path.join(NETWORK_STORAGE_PATH, 'model_cache')
-# OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
+NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/runpod-volume')
+MODEL_CACHE_PATH = os.path.join(NETWORK_STORAGE_PATH, 'model_cache')
+OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 # S3_BUCKET = 'ttv-storage'
 # S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 # S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
