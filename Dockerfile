@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-ENV HF_HOME=/workspace/.cache/huggingface/
+ENV HF_HOME=/workspace
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
