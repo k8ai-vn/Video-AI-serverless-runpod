@@ -24,6 +24,10 @@ from inference import (
 from ltx_video.pipelines.pipeline_ltx_video import ConditioningItem, LTXMultiScalePipeline, LTXVideoPipeline
 from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 
+# Tối ưu hóa bộ nhớ ngay từ đầu
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+torch.cuda.empty_cache()
+
 config_file_path = "configs/ltxv-13b-0.9.7-distilled.yaml"
 with open(config_file_path, "r") as file:
     PIPELINE_CONFIG_YAML = yaml.safe_load(file)
@@ -86,6 +90,7 @@ print(f"Target inference device: {target_inference_device}")
 pipeline_instance.to(target_inference_device)
 if latent_upsampler_instance: 
     latent_upsampler_instance.to(target_inference_device)
+torch.cuda.empty_cache()
 
 
 # --- Helper function for dimension calculation ---
@@ -232,6 +237,7 @@ def generate(prompt, negative_prompt, input_image_filepath, input_video_filepath
             raise gr.Error(f"Could not load video: {e}")
 
     print(f"Moving models to {target_inference_device} for inference (if not already there)...")
+    torch.cuda.empty_cache()
     
     active_latent_upsampler = None
     if improve_texture_flag and latent_upsampler_instance:
@@ -483,4 +489,4 @@ if __name__ == "__main__":
     if os.path.exists(models_dir) and os.path.isdir(models_dir):
         print(f"Model directory: {Path(models_dir).resolve()}")
     
-    demo.queue().launch(debug=True, share=False, mcp_server=True)
+    demo.queue().launch(server_name="0.0.0.0", debug=True, share=False, mcp_server=True)
