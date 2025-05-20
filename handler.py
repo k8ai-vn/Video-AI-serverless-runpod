@@ -97,18 +97,10 @@ def initialize_pipeline():
             if not os.path.exists(transformer_path):
                 raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
             
-            # Initialize transformer model using the correct import
-            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                MODEL_PATH,
-                subfolder="transformer",
-                torch_dtype=weight_dtype,
-                local_files_only=True
-            )
-            
-            # Initialize pipeline
+            # Initialize pipeline directly without manually loading the transformer
+            # This avoids the pooled_projections argument error
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
-                transformer=transformer, 
                 torch_dtype=weight_dtype,
                 local_files_only=True
             )
