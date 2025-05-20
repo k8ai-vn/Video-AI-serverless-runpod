@@ -134,9 +134,10 @@ def handler(event):
         current_time = datetime.datetime.now().strftime('%d%m%Y%H%M%S')
         random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
         video_file_name = f"{current_time}_{random_string}.mp4"
+        video_path = os.path.join(output_path, video_file_name)
         
         # Generate the video
-        video = generator.generate_video(
+        video_result = generator.generate_video(
             prompt,
             sampling_param=param,
             # return_frames=True,  # Also return frames from this call (defaults to False)
@@ -144,14 +145,25 @@ def handler(event):
             save_video=True
         )
         
-        video_path_exported = os.path.join(output_path, video.path)
-        os.rename(video_path_exported, f"{output_path}{video_file_name}")
+        # Check if video_result contains a path attribute or if it's a dictionary
+        if hasattr(video_result, 'path'):
+            video_path_exported = os.path.join(output_path, video_result.path)
+            os.rename(video_path_exported, video_path)
+        else:
+            # If video_result is a dictionary or has a different structure
+            # Assuming the file is already saved to the output_path with a default name
+            # Look for the most recent mp4 file in the output directory
+            mp4_files = [f for f in os.listdir(output_path) if f.endswith('.mp4')]
+            if mp4_files:
+                # Sort by creation time, newest first
+                newest_file = max(mp4_files, key=lambda f: os.path.getctime(os.path.join(output_path, f)))
+                os.rename(os.path.join(output_path, newest_file), video_path)
         
         # Upload the video to S3
         s3_url = None
         if all(key in os.environ for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]):
             try:
-                upload_file(f"{output_path}{video_file_name}", 
+                upload_file(video_path, 
                            input_params.get('user_uuid', 'system_default'), 
                            S3_BUCKET, 
                            video_file_name)
@@ -163,7 +175,7 @@ def handler(event):
         return {
             "output": {
                 "prompt": prompt,
-                "video_path": f"{output_path}{video_file_name}",
+                "video_path": video_path,
                 "s3_url": s3_url,
                 "parameters": {
                     "num_frames": param.num_frames,
