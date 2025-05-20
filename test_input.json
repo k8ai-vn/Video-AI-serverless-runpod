@@ -1,0 +1,11 @@
+{
+    "input": {
+        "prompt": "A beautiful sunset over a calm ocean, with gentle waves.",
+        "num_frames": 45,
+        "width": 1024,
+        "height": 576,
+        "num_inference_steps": 6,
+        "guidance_scale": 7.5,
+        "seed": 42
+    }
+}
