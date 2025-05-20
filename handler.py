@@ -102,8 +102,8 @@ def initialize_pipeline():
             def patched_forward(self, *args, **kwargs):
                 # Ensure pooled_projections is not None to avoid the 'NoneType' has no attribute 'dtype' error
                 if 'pooled_projections' not in kwargs or kwargs['pooled_projections'] is None:
-                    # Access hidden_size from model_dim instead of config.hidden_size
-                    hidden_size = self.config.model_dim if hasattr(self.config, 'model_dim') else 1024
+                    # Create a tensor with the correct shape (768 instead of 1024)
+                    hidden_size = 768  # Use the correct size for the model
                     kwargs['pooled_projections'] = torch.zeros(1, hidden_size, dtype=weight_dtype).to(device)
                 return original_forward(self, *args, **kwargs)
             
