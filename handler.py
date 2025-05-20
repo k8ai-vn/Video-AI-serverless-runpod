@@ -33,7 +33,7 @@ def main():
     sampling_param.height = 576
     
     # How many steps we denoise the video (higher = better quality, slower generation)
-    sampling_param.num_inference_steps = 30
+    sampling_param.num_inference_steps = 6
     
     # How strongly the video conforms to the prompt (higher = more faithful to prompt)
     sampling_param.guidance_scale = 7.5
