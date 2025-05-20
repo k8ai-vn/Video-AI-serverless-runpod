@@ -100,8 +100,10 @@ def initialize_pipeline():
             # Monkey patch the forward method to handle the pooled_projections argument
             original_forward = HunyuanVideoTransformer3DModel.forward
             def patched_forward(self, *args, **kwargs):
-                if 'pooled_projections' not in kwargs:
-                    kwargs['pooled_projections'] = None
+                # Ensure pooled_projections is not None to avoid the 'NoneType' has no attribute 'dtype' error
+                if 'pooled_projections' not in kwargs or kwargs['pooled_projections'] is None:
+                    # Create a default tensor with the appropriate dtype
+                    kwargs['pooled_projections'] = torch.zeros(1, self.config.hidden_size, dtype=weight_dtype).to(device)
                 return original_forward(self, *args, **kwargs)
             
             HunyuanVideoTransformer3DModel.forward = patched_forward
