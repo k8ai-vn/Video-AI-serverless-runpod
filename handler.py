@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from botocore.config import Config
 import torch
 import uuid
+import multiprocessing
 
 # Define network storage paths
 NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/workspace')
@@ -72,19 +73,22 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         return False
     return True
 
+# Configure the pipeline
 config = PipelineConfig.from_pretrained(MODEL_NAME)
-# Can adjust any parameters
-# Other arguments will be set to best defaults
 config.num_gpus = 1 # how many GPUS to parallelize generation
 # config.vae_config.vae_precision = "fp32"
 
-# Create a video generator with a pre-trained model
-generator = VideoGenerator.from_pretrained(
-    MODEL_NAME,
-    pipeline_config=config
-    # num_gpus=4,  # Adjust based on your hardware
-)
+# Initialize the generator at module level but only when needed
+generator = None
 
+def initialize_generator():
+    global generator
+    if generator is None:
+        generator = VideoGenerator.from_pretrained(
+            MODEL_NAME,
+            pipeline_config=config
+        )
+    return generator
 
 def handler(event):
     """
@@ -108,8 +112,8 @@ def handler(event):
         height = input_params.get("height", 576)
         seed = input_params.get("seed")  # Optional, can be None
         
-        # Override default configurations while keeping optimal defaults for other settings
-        generator = VideoGenerator.from_pretrained(MODEL_NAME, pipeline_config=config)
+        # Initialize the generator if not already done
+        generator = initialize_generator()
 
         # Generation config
         param = SamplingParam.from_pretrained(MODEL_NAME)
@@ -176,4 +180,9 @@ def handler(event):
 
 # Start the RunPod serverless handler
 if __name__ == '__main__':
+    # Add multiprocessing support for Windows if needed
+    multiprocessing.freeze_support()
+    # Initialize the generator once at startup
+    initialize_generator()
+    # Start the serverless handler
     runpod.serverless.start({"handler": handler})
