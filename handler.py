@@ -138,39 +138,65 @@ async def generate_video(request: VideoGenerationRequest):
         video_file_name = f"{current_time}_{random_string}.mp4"
         video_path = os.path.join(output_path, video_file_name)
         
-        # Generate the video
-        video_result = generator.generate_video(
-            request.prompt,
-            sampling_param=param,
-            output_path=output_path,
-            save_video=True
+        # Create a task ID for tracking
+        task_id = str(uuid.uuid4())
+        
+        # Start a background process for video generation
+        def generate_video_task(prompt, param, output_path, video_path, video_file_name, user_uuid):
+            try:
+                # Generate the video
+                video_result = generator.generate_video(
+                    prompt,
+                    sampling_param=param,
+                    output_path=output_path,
+                    save_video=True
+                )
+                
+                # Check if video_result contains a path attribute or if it's a dictionary
+                if hasattr(video_result, 'path'):
+                    video_path_exported = os.path.join(output_path, video_result.path)
+                    os.rename(video_path_exported, video_path)
+                else:
+                    mp4_files = [f for f in os.listdir(output_path) if f.endswith('.mp4')]
+                    if mp4_files:
+                        newest_file = max(mp4_files, key=lambda f: os.path.getctime(os.path.join(output_path, f)))
+                        os.rename(os.path.join(output_path, newest_file), video_path)
+                
+                print(f"Video path: {video_path}")
+                
+                # Upload the video to S3
+                upload_file(video_path, 
+                            user_uuid, 
+                            S3_BUCKET, 
+                            video_file_name)
+                print(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
+            except Exception as e:
+                print(f"Error in background task: {str(e)}")
+        
+        # Start the background process
+        process = multiprocessing.Process(
+            target=generate_video_task,
+            args=(
+                request.prompt,
+                param,
+                output_path,
+                video_path,
+                video_file_name,
+                request.user_uuid
+            )
         )
+        process.daemon = True  # Set as daemon so it doesn't block program exit
+        process.start()
         
-        # Check if video_result contains a path attribute or if it's a dictionary
-        if hasattr(video_result, 'path'):
-            video_path_exported = os.path.join(output_path, video_result.path)
-            os.rename(video_path_exported, video_path)
-        else:
-            mp4_files = [f for f in os.listdir(output_path) if f.endswith('.mp4')]
-            if mp4_files:
-                newest_file = max(mp4_files, key=lambda f: os.path.getctime(os.path.join(output_path, f)))
-                os.rename(os.path.join(output_path, newest_file), video_path)
-        
-        print(f"Video path: {video_path}")
-        
-        # Upload the video to S3
-        upload_file(video_path, 
-                    request.user_uuid, 
-                    S3_BUCKET, 
-                    video_file_name)
+        # Return immediately with task ID
         s3_url = f"s3://{S3_BUCKET}/{request.user_uuid}/{video_file_name}"
-        print(f"Uploaded video to {s3_url}")
-        
         return {
             "output": {
+                "status": "processing",
+                "task_id": task_id,
                 "prompt": request.prompt,
-                "video_path": video_path,
-                "s3_url": s3_url,
+                "expected_video_path": video_path,
+                "expected_s3_url": s3_url,
                 "parameters": {
                     "num_frames": param.num_frames,
                     "width": request.width,
