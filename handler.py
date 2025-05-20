@@ -78,12 +78,11 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
 
 # Initialize the pipeline
 pipeline = None
-
 def initialize_pipeline():
     global pipeline
     if pipeline is None:
         try:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
             weight_dtype = torch.bfloat16
             
             print(f"Loading model from: {MODEL_PATH}")
@@ -92,26 +91,12 @@ def initialize_pipeline():
             if not os.path.exists(MODEL_PATH):
                 raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
             
-            # Check if transformer subfolder exists
-            transformer_path = os.path.join(MODEL_PATH, "transformer")
-            if not os.path.exists(transformer_path):
-                raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
-            
-            # Load transformer model separately to apply monkey patch
-            # transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-            #     transformer_path,
-            #     torch_dtype=weight_dtype
-            # )
-            # device = torch.cuda.current_device()
-            # Peiyuan: GPU seed will cause A100 and H100 to produce different results .....
-            weight_dtype = torch.bfloat16
-
-            # if transformer_path is not None:
-            #     transformer = HunyuanVideoTransformer3DModel.from_pretrained(transformer_path)
-            # else:
-            transformer = HunyuanVideoTransformer3DModel.from_pretrained(MODEL_PATH,
-                                                                        subfolder="transformer/",
-                                                                        torch_dtype=weight_dtype)
+            # Load transformer model separately
+            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                MODEL_PATH,
+                subfolder="transformer/",
+                torch_dtype=weight_dtype
+            )
 
             # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
@@ -127,8 +112,8 @@ def initialize_pipeline():
             # Set flow shift parameter
             pipeline.scheduler._shift = 17  # Default flow shift
             
-            # Enable CPU offload if needed
-            pipeline.enable_model_cpu_offload()
+            # Enable CPU offload
+            pipeline.enable_model_cpu_offload(device)
             
             print("Pipeline initialized successfully")
         except Exception as e:
