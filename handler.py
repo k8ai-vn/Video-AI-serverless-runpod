@@ -79,11 +79,12 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
 
 # Initialize the pipeline
 pipeline = None
-def initialize_pipeline():
+def initialize_pipeline(quantization="nf4"):
     global pipeline
     if pipeline is None:
         try:
             device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+            # Use bfloat16 for compatibility with FlashAttention
             weight_dtype = torch.bfloat16
             
             print(f"Loading model from: {MODEL_PATH}")
@@ -92,20 +93,37 @@ def initialize_pipeline():
             if not os.path.exists(MODEL_PATH):
                 raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
             
-            # Load transformer model with quantization
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_quant_type="nf4",
-                llm_int8_skip_modules=["proj_out", "norm_out"]
-            )
-            
-            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                MODEL_PATH,
-                subfolder="transformer/",
-                torch_dtype=weight_dtype,
-                quantization_config=quantization_config
-            )
+            # Load transformer model with appropriate quantization
+            if quantization == "nf4":
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    llm_int8_skip_modules=["proj_out", "norm_out"]
+                )
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype,
+                    quantization_config=quantization_config
+                )
+            elif quantization == "int8":
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True, 
+                    llm_int8_skip_modules=["proj_out", "norm_out"]
+                )
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype,
+                    quantization_config=quantization_config
+                )
+            else:  # No quantization
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype
+                ).to(device)
             
             print("Max vram for read transformer:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
             torch.cuda.reset_max_memory_allocated(device)
@@ -154,6 +172,7 @@ class VideoGenerationRequest(BaseModel):
     output_path: Optional[str] = None
     fps: int = 24
     flow_shift: int = 17
+    quantization: str = "nf4"  # Options: "nf4", "int8", or None/empty string for no quantization
 
 # Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
 multiprocessing.set_start_method('spawn', force=True)
@@ -161,10 +180,10 @@ multiprocessing.set_start_method('spawn', force=True)
 # Define the video generation task function at module level (not nested)
 def generate_video_task(prompt, output_path, video_path, video_file_name, user_uuid, 
                         height, width, num_frames, num_inference_steps, guidance_scale, 
-                        negative_prompt, seed, flow_shift, fps):
+                        negative_prompt, seed, flow_shift, fps, quantization):
     try:
-        # Initialize the pipeline
-        pipeline = initialize_pipeline()
+        # Initialize the pipeline with specified quantization
+        pipeline = initialize_pipeline(quantization)
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         if pipeline is None:
@@ -218,7 +237,7 @@ async def generate_video(request: VideoGenerationRequest):
         print(f"Worker Start")
         
         # Initialize the pipeline if not already done
-        pipeline = initialize_pipeline()
+        pipeline = initialize_pipeline(request.quantization)
 
         # Define output path
         output_path = request.output_path or os.path.join(OUTPUT_PATH, 'my_videos/')
@@ -250,7 +269,8 @@ async def generate_video(request: VideoGenerationRequest):
                 request.negative_prompt,
                 request.seed,
                 request.flow_shift,
-                request.fps
+                request.fps,
+                request.quantization
             )
         )
         process.daemon = True  # Set as daemon so it doesn't block program exit
@@ -274,7 +294,8 @@ async def generate_video(request: VideoGenerationRequest):
                     "embedded_cfg_scale": request.embedded_cfg_scale,
                     "flow_shift": request.flow_shift,
                     "seed": request.seed,
-                    "fps": request.fps
+                    "fps": request.fps,
+                    "quantization": request.quantization
                 }
             }
         }
