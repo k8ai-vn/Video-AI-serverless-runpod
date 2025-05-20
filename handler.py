@@ -112,7 +112,7 @@ def handler(event):
         width = input_params.get("width", 1024)
         height = input_params.get("height", 576)
         seed = input_params.get("seed")  # Optional, can be None
-        
+        negative_prompt = input_params.get("negative_prompt", "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards")
         # Initialize the generator if not already done
         generator = initialize_generator()
 
@@ -124,6 +124,7 @@ def handler(event):
         param.guidance_scale = guidance_scale # stronger guidance
         param.width = width  # Higher resolution
         param.height = height
+        param.negative_prompt = negative_prompt
         if seed is not None:
             param.seed = seed
         
