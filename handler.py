@@ -53,24 +53,24 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
         object_name = os.path.basename(file_name)
 
     # Upload the file
-    try:
-        object_name = user_uuid + '/' + datetime.datetime.now().strftime('%d%m%Y%H%M%S') + '_' + file_name
+    # try:
+    object_name = user_uuid + '/' + datetime.datetime.now().strftime('%d%m%Y%H%M%S') + '_' + file_name
 
-        response = s3_client.upload_file(file_name, bucket, object_name)
+    response = s3_client.upload_file(file_name, bucket, object_name)
+    
+    # Create a presigned URL for the file
+    presigned_url = s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': bucket, 'Key': object_name},
+        ExpiresIn=3600  # URL will be valid for 1 hour
+    )   
+    print(presigned_url)
+    # delete file from local
+    os.remove(file_name)
         
-        # Create a presigned URL for the file
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket, 'Key': object_name},
-            ExpiresIn=3600  # URL will be valid for 1 hour
-        )   
-        print(presigned_url)
-        # delete file from local
-        os.remove(file_name)
-        
-    except ClientError as e:
-        logging.error(e)
-        return False
+    # except ClientError as e:
+    #     logging.error(e)
+    #     return False
     return True
 
 # Configure the pipeline
@@ -160,17 +160,17 @@ def handler(event):
                 os.rename(os.path.join(output_path, newest_file), video_path)
         
         # Upload the video to S3
-        s3_url = None
-        if all(key in os.environ for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]):
-            try:
-                upload_file(video_path, 
-                           input_params.get('user_uuid', 'system_default'), 
-                           S3_BUCKET, 
-                           video_file_name)
-                s3_url = f"s3://{S3_BUCKET}/{input_params.get('user_uuid', 'system_default')}/{video_file_name}"
-                print(f"Uploaded video to {s3_url}")
-            except Exception as e:
-                print(f"S3 upload error: {str(e)}")
+        # s3_url = None
+        # if all(key in os.environ for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]):
+        #     try:
+        upload_file(video_path, 
+                    input_params.get('user_uuid', 'system_default'), 
+                    S3_BUCKET, 
+                    video_file_name)
+        s3_url = f"s3://{S3_BUCKET}/{input_params.get('user_uuid', 'system_default')}/{video_file_name}"
+        print(f"Uploaded video to {s3_url}")
+            # except Exception as e:
+            #     print(f"S3 upload error: {str(e)}")
         
         return {
             "output": {
