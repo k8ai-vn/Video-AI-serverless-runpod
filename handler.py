@@ -55,8 +55,12 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
 
     # Upload the file
     # try:
-    object_name = user_uuid + '/' + datetime.datetime.now().strftime('%d%m%Y%H%M%S') + '_' + file_name
-
+    # object_name = user_uuid + '/' + datetime.datetime.now().strftime('%d%m%Y%H%M%S') + '_' + file_name
+    # object_name = last part of file_name
+    object_name = file_name.split('/')[-1]
+    print('object_name', object_name)
+    object_name = user_uuid + '/' + object_name
+    print('object_name', object_name)
     response = s3_client.upload_file(file_name, bucket, object_name)
     
     # Create a presigned URL for the file
