@@ -76,7 +76,7 @@ config = PipelineConfig.from_pretrained(MODEL_NAME)
 # Can adjust any parameters
 # Other arguments will be set to best defaults
 config.num_gpus = 1 # how many GPUS to parallelize generation
-config.vae_config.vae_precision = "fp32"
+# config.vae_config.vae_precision = "fp32"
 
 # Create a video generator with a pre-trained model
 generator = VideoGenerator.from_pretrained(
