@@ -14,11 +14,11 @@ import boto3
 from botocore.exceptions import ClientError
 from botocore.config import Config
 from diffusers.utils import export_to_video
+from diffusers.models.transformers.transformer_hunyuan_video import HunyuanVideoTransformer3DModel
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from fastvideo.models.hunyuan_hf.modeling_hunyuan import HunyuanVideoTransformer3DModel
 from fastvideo.models.hunyuan_hf.pipeline_hunyuan import HunyuanVideoPipeline
 
 # Define network storage paths
@@ -97,7 +97,7 @@ def initialize_pipeline():
             if not os.path.exists(transformer_path):
                 raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
             
-            # Initialize transformer model
+            # Initialize transformer model using the correct import
             transformer = HunyuanVideoTransformer3DModel.from_pretrained(
                 MODEL_PATH,
                 subfolder="transformer",
@@ -164,6 +164,7 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         
         # Generate the video with torch.autocast for better performance
         with torch.autocast("cuda", dtype=torch.bfloat16):
+            # Remove negative_prompt as it's not supported by the pipeline
             output = pipeline(
                 prompt=prompt,
                 height=height,
@@ -171,7 +172,6 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
                 num_frames=num_frames,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
-                negative_prompt=negative_prompt,
                 generator=generator,
             ).frames[0]
         
