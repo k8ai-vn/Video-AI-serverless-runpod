@@ -148,6 +148,46 @@ class VideoGenerationRequest(BaseModel):
 # Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
 multiprocessing.set_start_method('spawn', force=True)
 
+# Define the video generation task function at module level (not nested)
+def generate_video_task(prompt, output_path, video_path, video_file_name, user_uuid, 
+                        height, width, num_frames, num_inference_steps, guidance_scale, 
+                        negative_prompt, seed, flow_shift, fps):
+    try:
+        # Initialize the pipeline
+        pipeline = initialize_pipeline()
+        
+        # Set up generator for reproducibility
+        generator = torch.Generator("cpu").manual_seed(seed if seed is not None else torch.seed())
+        
+        # Set flow shift parameter
+        pipeline.scheduler._shift = flow_shift
+        
+        # Generate the video with torch.autocast for better performance
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            output = pipeline(
+                prompt=prompt,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                negative_prompt=negative_prompt,
+                generator=generator,
+            ).frames[0]
+        
+        # Export the video
+        export_to_video(output, video_path, fps=fps)
+        print(f"Video generated at: {video_path}")
+        
+        # Upload the video to S3
+        upload_file(video_path, 
+                    user_uuid, 
+                    S3_BUCKET, 
+                    video_file_name)
+        print(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
+    except Exception as e:
+        print(f"Error in background task: {str(e)}")
+
 @app.post("/generate-video")
 async def generate_video(request: VideoGenerationRequest):
     try:
@@ -169,41 +209,6 @@ async def generate_video(request: VideoGenerationRequest):
         # Create a task ID for tracking
         task_id = str(uuid.uuid4())
         
-        # Start a background process for video generation
-        def generate_video_task(prompt, output_path, video_path, video_file_name, user_uuid):
-            try:
-                # Set up generator for reproducibility
-                generator = torch.Generator("cpu").manual_seed(request.seed if request.seed is not None else torch.seed())
-                
-                # Set flow shift parameter
-                pipeline.scheduler._shift = request.flow_shift
-                
-                # Generate the video with torch.autocast for better performance
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    output = pipeline(
-                        prompt=prompt,
-                        height=request.height,
-                        width=request.width,
-                        num_frames=request.num_frames,
-                        num_inference_steps=request.num_inference_steps,
-                        guidance_scale=request.guidance_scale,
-                        negative_prompt=request.negative_prompt,
-                        generator=generator,
-                    ).frames[0]
-                
-                # Export the video
-                export_to_video(output, video_path, fps=request.fps)
-                print(f"Video generated at: {video_path}")
-                
-                # Upload the video to S3
-                upload_file(video_path, 
-                            user_uuid, 
-                            S3_BUCKET, 
-                            video_file_name)
-                print(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
-            except Exception as e:
-                print(f"Error in background task: {str(e)}")
-        
         # Start the background process
         process = multiprocessing.Process(
             target=generate_video_task,
@@ -212,7 +217,16 @@ async def generate_video(request: VideoGenerationRequest):
                 output_path,
                 video_path,
                 video_file_name,
-                request.user_uuid
+                request.user_uuid,
+                request.height,
+                request.width,
+                request.num_frames,
+                request.num_inference_steps,
+                request.guidance_scale,
+                request.negative_prompt,
+                request.seed,
+                request.flow_shift,
+                request.fps
             )
         )
         process.daemon = True  # Set as daemon so it doesn't block program exit
