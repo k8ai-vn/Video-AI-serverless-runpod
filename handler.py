@@ -14,7 +14,7 @@ def main():
     if available_gpus == 0:
         print("No GPUs detected. Running on CPU only.")
         config.use_cpu_offload = True
-    
+    print(f"Using {num_gpus} GPUs")
     # Create the generator with appropriate GPU count
     generator = VideoGenerator.from_pretrained(
         model_name,
