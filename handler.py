@@ -140,7 +140,7 @@ def initialize_pipeline(quantization="nf4"):
 
             # Enable VAE tiling for better memory usage
             pipeline.enable_vae_tiling()
-            pipeline.vae.enable_tiling(tile_size=32)  # Thử các kích thước tile khác nhau
+            
             # Set flow shift parameter
             pipeline.scheduler._shift = 17  # Default flow shift
 
