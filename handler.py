@@ -111,6 +111,7 @@ def handler(event):
         input_params = event.get("input", {})
         
         prompt = input_params.get("prompt", "A beautiful sunset over a calm ocean, with gentle waves.")
+        num_frames = input_params.get("num_frames", 107)
         num_inference_steps = input_params.get("num_inference_steps", 30)
         guidance_scale = input_params.get("guidance_scale", 7.5)
         width = input_params.get("width", 1024)
@@ -129,6 +130,7 @@ def handler(event):
         param.width = width  # Higher resolution
         param.height = height
         param.negative_prompt = negative_prompt
+        param.num_frames = num_frames
         if seed is not None:
             param.seed = seed
         
