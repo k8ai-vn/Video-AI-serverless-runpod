@@ -17,5 +17,8 @@ RUN python -c "from fastvideo import VideoGenerator, PipelineConfig; \
     config.use_cpu_offload = True; \
     VideoGenerator.from_pretrained(model_name, pipeline_config=config)"
 
+# Expose port for FastAPI
+EXPOSE 8000
+
 # Lệnh chạy script khi container khởi động
 CMD ["python", "/workspace/handler.py"]

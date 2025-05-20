@@ -1,2 +1,4 @@
 runpod
 boto3
+fastapi
+uvicorn

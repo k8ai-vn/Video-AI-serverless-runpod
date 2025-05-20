@@ -1,4 +1,3 @@
-import runpod
 import time  
 from fastvideo import VideoGenerator, SamplingParam, PipelineConfig
 import os
@@ -6,27 +5,26 @@ import boto3
 import datetime
 import random
 import string
-### UPLOAD FILE TO S3
 import logging
 from botocore.exceptions import ClientError
 from botocore.config import Config
 import torch
 import uuid
 import multiprocessing
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
 # Define network storage paths
 NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/workspace')
-# MODEL_CACHE_PATH = os.path.join(NETWORK_STORAGE_PATH, 'model_cache')
 OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 print('S3_ACCESS_KEY', S3_ACCESS_KEY)
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
-# MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 MODEL_NAME = 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers'
 
 # Create directories if they don't exist
-# os.makedirs(MODEL_CACHE_PATH, exist_ok=True)
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 
 # Initialize S3 client
@@ -95,47 +93,43 @@ def initialize_generator():
         )
     return generator
 
-def handler(event):
-    """
-    This function processes incoming requests to your Serverless endpoint.
-    
-    Args:
-        event (dict): Contains the input data and request metadata
-        
-    Returns:
-        Any: The result to be returned to the client
-    """
+# Initialize FastAPI app
+app = FastAPI(title="Video Generation API")
+
+# Define request model
+class VideoGenerationRequest(BaseModel):
+    prompt: str = "A beautiful sunset over a calm ocean, with gentle waves."
+    num_frames: int = 107
+    num_inference_steps: int = 30
+    guidance_scale: float = 7.5
+    width: int = 1024
+    height: int = 576
+    seed: Optional[int] = None
+    negative_prompt: str = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
+    user_uuid: str = "system_default"
+    output_path: Optional[str] = None
+
+@app.post("/generate-video")
+async def generate_video(request: VideoGenerationRequest):
     try:
-        # Extract input data
         print(f"Worker Start")
-        input_params = event.get("input", {})
         
-        prompt = input_params.get("prompt", "A beautiful sunset over a calm ocean, with gentle waves.")
-        num_frames = input_params.get("num_frames", 107)
-        num_inference_steps = input_params.get("num_inference_steps", 30)
-        guidance_scale = input_params.get("guidance_scale", 7.5)
-        width = input_params.get("width", 1024)
-        height = input_params.get("height", 576)
-        seed = input_params.get("seed")  # Optional, can be None
-        negative_prompt = input_params.get("negative_prompt", "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards")
         # Initialize the generator if not already done
         generator = initialize_generator()
 
         # Generation config
         param = SamplingParam.from_pretrained(MODEL_NAME)
-        # Adjust specific sampling parameters
-        # Other arguments will be set to best defaults
-        param.num_inference_steps = num_inference_steps # higher quality
-        param.guidance_scale = guidance_scale # stronger guidance
-        param.width = width  # Higher resolution
-        param.height = height
-        param.negative_prompt = negative_prompt
-        param.num_frames = num_frames
-        if seed is not None:
-            param.seed = seed
+        param.num_inference_steps = request.num_inference_steps
+        param.guidance_scale = request.guidance_scale
+        param.width = request.width
+        param.height = request.height
+        param.negative_prompt = request.negative_prompt
+        param.num_frames = request.num_frames
+        if request.seed is not None:
+            param.seed = request.seed
         
         # Define output path
-        output_path = input_params.get('output_path', os.path.join(OUTPUT_PATH, 'my_videos/'))
+        output_path = request.output_path or os.path.join(OUTPUT_PATH, 'my_videos/')
         os.makedirs(output_path, exist_ok=True)
         
         # Generate date time in DDMMYYYYHHMMSS format and random string
@@ -146,10 +140,9 @@ def handler(event):
         
         # Generate the video
         video_result = generator.generate_video(
-            prompt,
+            request.prompt,
             sampling_param=param,
-            # return_frames=True,  # Also return frames from this call (defaults to False)
-            output_path=output_path,  # Controls where videos are saved
+            output_path=output_path,
             save_video=True
         )
         
@@ -158,51 +151,45 @@ def handler(event):
             video_path_exported = os.path.join(output_path, video_result.path)
             os.rename(video_path_exported, video_path)
         else:
-            # If video_result is a dictionary or has a different structure
-            # Assuming the file is already saved to the output_path with a default name
-            # Look for the most recent mp4 file in the output directory
             mp4_files = [f for f in os.listdir(output_path) if f.endswith('.mp4')]
             if mp4_files:
-                # Sort by creation time, newest first
                 newest_file = max(mp4_files, key=lambda f: os.path.getctime(os.path.join(output_path, f)))
                 os.rename(os.path.join(output_path, newest_file), video_path)
+        
         print(f"Video path: {video_path}")
+        
         # Upload the video to S3
-        # s3_url = None
-        # if all(key in os.environ for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]):
-        #     try:
         upload_file(video_path, 
-                    input_params.get('user_uuid', 'system_default'), 
+                    request.user_uuid, 
                     S3_BUCKET, 
                     video_file_name)
-        s3_url = f"s3://{S3_BUCKET}/{input_params.get('user_uuid', 'system_default')}/{video_file_name}"
+        s3_url = f"s3://{S3_BUCKET}/{request.user_uuid}/{video_file_name}"
         print(f"Uploaded video to {s3_url}")
-            # except Exception as e:
-            #     print(f"S3 upload error: {str(e)}")
         
         return {
             "output": {
-                "prompt": prompt,
+                "prompt": request.prompt,
                 "video_path": video_path,
                 "s3_url": s3_url,
                 "parameters": {
                     "num_frames": param.num_frames,
-                    "width": width,
-                    "height": height,
-                    "num_inference_steps": num_inference_steps,
-                    "guidance_scale": guidance_scale,
-                    "seed": seed
+                    "width": request.width,
+                    "height": request.height,
+                    "num_inference_steps": request.num_inference_steps,
+                    "guidance_scale": request.guidance_scale,
+                    "seed": request.seed
                 }
             }
         }
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Start the RunPod serverless handler
+# Start the FastAPI server
 if __name__ == '__main__':
     # Add multiprocessing support for Windows if needed
     multiprocessing.freeze_support()
     # Initialize the generator once at startup
     initialize_generator()
-    # Start the serverless handler
-    runpod.serverless.start({"handler": handler})
+    # Start the FastAPI server
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
