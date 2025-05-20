@@ -58,7 +58,6 @@ def handler(event):
         os.makedirs(output_dir, exist_ok=True)
         
         # Generate video
-        video_path = os.path.join(output_dir, "generated_video.mp4")
         video = generator.generate_video(
             prompt, 
             sampling_param=sampling_param, 
@@ -66,10 +65,12 @@ def handler(event):
             return_frames=False,
             save_video=True
         )
-        
+        video_path_exported = os.path.join(output_dir, prompt)
+
         # Generate a unique filename instead of using the prompt
         unique_filename = f"video_{uuid.uuid4()}.mp4"
-        os.rename(video_path, f"{output_dir}/{unique_filename}")
+        os.rename(video_path_exported, f"{output_dir}/{unique_filename}")
+        video_path = os.path.join(output_dir, unique_filename)
         
         # Upload to S3 if credentials are provided
         s3_url = None
