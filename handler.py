@@ -102,16 +102,16 @@ def initialize_pipeline():
             #     transformer_path,
             #     torch_dtype=weight_dtype
             # )
-            device = torch.cuda.current_device()
+            # device = torch.cuda.current_device()
             # Peiyuan: GPU seed will cause A100 and H100 to produce different results .....
             weight_dtype = torch.bfloat16
 
-            if transformer_path is not None:
-                transformer = HunyuanVideoTransformer3DModel.from_pretrained(transformer_path)
-            else:
-                transformer = HunyuanVideoTransformer3DModel.from_pretrained(MODEL_PATH,
-                                                                            subfolder="transformer/",
-                                                                            torch_dtype=weight_dtype)
+            # if transformer_path is not None:
+            #     transformer = HunyuanVideoTransformer3DModel.from_pretrained(transformer_path)
+            # else:
+            transformer = HunyuanVideoTransformer3DModel.from_pretrained(MODEL_PATH,
+                                                                        subfolder="transformer/",
+                                                                        torch_dtype=weight_dtype)
 
             # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
