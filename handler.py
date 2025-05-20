@@ -131,7 +131,6 @@ def initialize_pipeline(quantization="nf4"):
             )
             
             # Enable VAE tiling with optimized tile size
-            pipeline.enable_vae_tiling(tile_size=32)
             pipeline.scheduler._shift = 17
             
             # Enable sequential CPU offloading
