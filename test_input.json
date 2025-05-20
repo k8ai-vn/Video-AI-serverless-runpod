@@ -4,7 +4,7 @@
         "num_frames": 107,
         "width": 1024,
         "height": 576,
-        "num_inference_steps": 6,
+        "num_inference_steps": 30,
         "guidance_scale": 7.5,
         "seed": 42
     }
