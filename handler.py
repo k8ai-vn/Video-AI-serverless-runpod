@@ -9,7 +9,8 @@ def main():
     # Check available GPU count to avoid invalid device ordinal error
     import torch
     available_gpus = torch.cuda.device_count()
-    num_gpus = min(available_gpus, 1)  # Use 1 GPU to avoid potential issues
+    print(f"Available GPUs: {available_gpus}")
+    num_gpus = min(available_gpus, 4)  # Use 1 GPU to avoid potential issues
     
     if available_gpus == 0:
         print("No GPUs detected. Running on CPU only.")
@@ -18,7 +19,7 @@ def main():
     # Create the generator with appropriate GPU count
     generator = VideoGenerator.from_pretrained(
         model_name,
-        num_gpus=num_gpus,
+        num_gpus=4,
         pipeline_config=config
     )
 
