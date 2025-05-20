@@ -1,12 +1,4 @@
-
-
 from fastvideo import VideoGenerator, SamplingParam, PipelineConfig
-
-# Will use 4 GPUs in parallel for faster generation
-# generator = VideoGenerator.from_pretrained(
-#     "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-#     num_gpus=4,
-# )
 
 def main():
     model_name = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
@@ -14,10 +6,19 @@ def main():
     config.vae_precision = "fp16"
     config.use_cpu_offload = True
 
-    # Create the generator
+    # Check available GPU count to avoid invalid device ordinal error
+    import torch
+    available_gpus = torch.cuda.device_count()
+    num_gpus = min(available_gpus, 1)  # Use 1 GPU to avoid potential issues
+    
+    if available_gpus == 0:
+        print("No GPUs detected. Running on CPU only.")
+        config.use_cpu_offload = True
+    
+    # Create the generator with appropriate GPU count
     generator = VideoGenerator.from_pretrained(
         model_name,
-        num_gpus=4,
+        num_gpus=num_gpus,
         pipeline_config=config
     )
 
