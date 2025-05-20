@@ -28,7 +28,7 @@ S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
 print('S3_ACCESS_KEY', S3_ACCESS_KEY)
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
-MODEL_PATH = os.environ.get('MODEL_PATH', 'data/FastHunyuan-diffusers')
+MODEL_PATH = os.environ.get('MODEL_PATH', '/workspace/data/FastHunyuan-diffusers')
 
 # Create directories if they don't exist
 os.makedirs(OUTPUT_PATH, exist_ok=True)
@@ -82,28 +82,47 @@ pipeline = None
 def initialize_pipeline():
     global pipeline
     if pipeline is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        weight_dtype = torch.bfloat16
-        
-        # Initialize transformer model
-        transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-            MODEL_PATH,
-            subfolder="transformer/",
-            torch_dtype=weight_dtype
-        )
-        
-        # Initialize pipeline
-        pipeline = HunyuanVideoPipeline.from_pretrained(
-            MODEL_PATH, 
-            transformer=transformer, 
-            torch_dtype=weight_dtype
-        )
-        
-        # Enable VAE tiling for better memory usage
-        pipeline.enable_vae_tiling()
-        
-        # Enable CPU offload if needed
-        pipeline.enable_model_cpu_offload()
+        try:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            weight_dtype = torch.bfloat16
+            
+            print(f"Loading model from: {MODEL_PATH}")
+            
+            # Check if model path exists
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
+            
+            # Check if transformer subfolder exists
+            transformer_path = os.path.join(MODEL_PATH, "transformer")
+            if not os.path.exists(transformer_path):
+                raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
+            
+            # Initialize transformer model
+            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                MODEL_PATH,
+                subfolder="transformer",
+                torch_dtype=weight_dtype,
+                local_files_only=True
+            )
+            
+            # Initialize pipeline
+            pipeline = HunyuanVideoPipeline.from_pretrained(
+                MODEL_PATH, 
+                transformer=transformer, 
+                torch_dtype=weight_dtype,
+                local_files_only=True
+            )
+            
+            # Enable VAE tiling for better memory usage
+            pipeline.enable_vae_tiling()
+            
+            # Enable CPU offload if needed
+            pipeline.enable_model_cpu_offload()
+            
+            print("Pipeline initialized successfully")
+        except Exception as e:
+            print(f"Error initializing pipeline: {str(e)}")
+            raise
     
     return pipeline
 
