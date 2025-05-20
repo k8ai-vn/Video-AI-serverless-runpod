@@ -158,7 +158,7 @@ def handler(event):
                 # Sort by creation time, newest first
                 newest_file = max(mp4_files, key=lambda f: os.path.getctime(os.path.join(output_path, f)))
                 os.rename(os.path.join(output_path, newest_file), video_path)
-        
+        print(f"Video path: {video_path}")
         # Upload the video to S3
         # s3_url = None
         # if all(key in os.environ for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]):
