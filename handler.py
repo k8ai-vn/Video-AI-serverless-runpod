@@ -14,7 +14,7 @@ import boto3
 from botocore.exceptions import ClientError
 from botocore.config import Config
 from diffusers.utils import export_to_video
-from diffusers.models.transformers.transformer_hunyuan_video import HunyuanVideoTransformer3DModel
+from fastvideo.models.hunyuan_hf.modeling_hunyuan import HunyuanVideoTransformer3DModel
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -98,11 +98,21 @@ def initialize_pipeline():
                 raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
             
             # Load transformer model separately to apply monkey patch
-            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                transformer_path,
-                torch_dtype=weight_dtype
-            )
-            
+            # transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+            #     transformer_path,
+            #     torch_dtype=weight_dtype
+            # )
+            device = torch.cuda.current_device()
+            # Peiyuan: GPU seed will cause A100 and H100 to produce different results .....
+            weight_dtype = torch.bfloat16
+
+            if transformer_path is not None:
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(transformer_path)
+            else:
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(MODEL_PATH,
+                                                                            subfolder="transformer/",
+                                                                            torch_dtype=weight_dtype)
+
             # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
