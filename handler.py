@@ -52,7 +52,7 @@ def handler(event):
             sampling_param.seed = seed
 
         # Create output directory
-        output_dir = "/tmp/output"
+        output_dir = "/workspace/output"
         os.makedirs(output_dir, exist_ok=True)
         
         # Generate video
@@ -67,7 +67,7 @@ def handler(event):
         
         # Generate a unique filename instead of using the prompt
         unique_filename = f"video_{uuid.uuid4()}.mp4"
-        os.rename(video_path, f"/tmp/output/{unique_filename}")
+        os.rename(video_path, f"/workspace/output/{unique_filename}")
         
         # Upload to S3 if credentials are provided
         s3_url = None
@@ -92,7 +92,7 @@ def handler(event):
                 unique_filename = f"video_{uuid.uuid4()}.mp4"
                 s3_key = f"videos/{unique_filename}"
                 
-                s3_client.upload_file(f"/tmp/output/{unique_filename}", bucket_name, s3_key)
+                s3_client.upload_file(f"/workspace/output/{unique_filename}", bucket_name, s3_key)
                 s3_url = f"s3://{bucket_name}/{s3_key}"
                 print(f"Uploaded video to {s3_url}")
             except Exception as e:
