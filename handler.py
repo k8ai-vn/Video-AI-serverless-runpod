@@ -99,7 +99,6 @@ def initialize_pipeline(quantization="nf4"):
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.bfloat16,
                     bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True,
                     llm_int8_skip_modules=["proj_out", "norm_out"]
                 )
                 transformer = HunyuanVideoTransformer3DModel.from_pretrained(
@@ -147,7 +146,6 @@ def initialize_pipeline(quantization="nf4"):
             # Enable CPU offload
             pipeline.enable_model_cpu_offload()
             
-            pipeline.enable_sequential_cpu_offload()
             print("Max vram for init pipeline:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
             print("Pipeline initialized successfully")
         except Exception as e:
@@ -201,7 +199,7 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         
         # Adjust num_frames based on video_length if provided
         if video_length is not None:
-            num_frames = min(int(video_length * fps), 24)
+            num_frames = int(video_length * fps)
             print(f"Adjusted num_frames to {num_frames} based on video_length of {video_length} seconds at {fps} fps")
         
         # Generate the video with torch.autocast for better performance
