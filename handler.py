@@ -97,7 +97,7 @@ def initialize_pipeline():
                 subfolder="transformer/",
                 torch_dtype=weight_dtype
             )
-
+            torch.cuda.reset_max_memory_allocated(device)
             # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
@@ -105,13 +105,15 @@ def initialize_pipeline():
                 torch_dtype=weight_dtype,
                 local_files_only=True
             )
-            
+            torch.cuda.reset_max_memory_allocated(device)
+
             # Enable VAE tiling for better memory usage
             pipeline.enable_vae_tiling()
             
             # Set flow shift parameter
             pipeline.scheduler._shift = 17  # Default flow shift
-            
+            print("Max vram for init pipeline:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
+
             # Enable CPU offload
             pipeline.enable_model_cpu_offload(device)
             
@@ -151,13 +153,14 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
     try:
         # Initialize the pipeline
         pipeline = initialize_pipeline()
-        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
         if pipeline is None:
             raise ValueError("Failed to initialize pipeline")
         
         # Set up generator for reproducibility
         generator = torch.Generator("cpu").manual_seed(seed if seed is not None else torch.seed())
-        
+        torch.cuda.reset_max_memory_allocated(device)
         # Set flow shift parameter
         pipeline.scheduler._shift = flow_shift
         
