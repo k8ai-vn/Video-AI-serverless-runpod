@@ -172,7 +172,8 @@ class VideoGenerationRequest(BaseModel):
     output_path: Optional[str] = None
     fps: int = 24
     flow_shift: int = 17
-    quantization: str = "nf4"  # Options: "nf4", "int8", or None/empty string for no quantization
+    quantization: str = "fp16"  # Options: fp16 and bf16, or None/empty string for no quantization
+    video_length: Optional[float] = None  # New parameter for video length in seconds
 
 # Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
 multiprocessing.set_start_method('spawn', force=True)
@@ -180,7 +181,7 @@ multiprocessing.set_start_method('spawn', force=True)
 # Define the video generation task function at module level (not nested)
 def generate_video_task(prompt, output_path, video_path, video_file_name, user_uuid, 
                         height, width, num_frames, num_inference_steps, guidance_scale, 
-                        negative_prompt, seed, flow_shift, fps, quantization):
+                        negative_prompt, seed, flow_shift, fps, quantization, video_length=None):
     try:
         # Initialize the pipeline with specified quantization
         pipeline = initialize_pipeline(quantization)
@@ -192,8 +193,14 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         # Set up generator for reproducibility
         generator = torch.Generator("cpu").manual_seed(seed if seed is not None else torch.seed())
         torch.cuda.reset_max_memory_allocated(device)
+        
         # Set flow shift parameter
         pipeline.scheduler._shift = flow_shift
+        
+        # Adjust num_frames based on video_length if provided
+        if video_length is not None:
+            num_frames = int(video_length * fps)
+            print(f"Adjusted num_frames to {num_frames} based on video_length of {video_length} seconds at {fps} fps")
         
         # Generate the video with torch.autocast for better performance
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -252,6 +259,12 @@ async def generate_video(request: VideoGenerationRequest):
         # Create a task ID for tracking
         task_id = str(uuid.uuid4())
         
+        # If video_length is provided, calculate the actual number of frames to be used
+        actual_num_frames = request.num_frames
+        if request.video_length is not None:
+            actual_num_frames = int(request.video_length * request.fps)
+            print(f"Using video_length parameter: {request.video_length} seconds at {request.fps} fps = {actual_num_frames} frames")
+        
         # Start the background process
         process = multiprocessing.Process(
             target=generate_video_task,
@@ -263,14 +276,15 @@ async def generate_video(request: VideoGenerationRequest):
                 request.user_uuid,
                 request.height,
                 request.width,
-                request.num_frames,
+                actual_num_frames,  # Use the calculated number of frames
                 request.num_inference_steps,
                 request.guidance_scale,
                 request.negative_prompt,
                 request.seed,
                 request.flow_shift,
                 request.fps,
-                request.quantization
+                request.quantization,
+                request.video_length
             )
         )
         process.daemon = True  # Set as daemon so it doesn't block program exit
@@ -286,7 +300,7 @@ async def generate_video(request: VideoGenerationRequest):
                 "expected_video_path": video_path,
                 "expected_s3_url": s3_url,
                 "parameters": {
-                    "num_frames": request.num_frames,
+                    "num_frames": actual_num_frames,  # Return the actual number of frames
                     "width": request.width,
                     "height": request.height,
                     "num_inference_steps": request.num_inference_steps,
@@ -295,7 +309,8 @@ async def generate_video(request: VideoGenerationRequest):
                     "flow_shift": request.flow_shift,
                     "seed": request.seed,
                     "fps": request.fps,
-                    "quantization": request.quantization
+                    "quantization": request.quantization,
+                    "video_length": request.video_length  # Include the video_length in the response
                 }
             }
         }
