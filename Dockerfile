@@ -17,6 +17,8 @@ RUN python -c "from fastvideo import VideoGenerator, PipelineConfig; \
     config.use_cpu_offload = True; \
     VideoGenerator.from_pretrained(model_name, pipeline_config=config)"
 
+RUN python /FastVideo/scripts/huggingface/download_hf.py --repo_id=FastVideo/FastHunyuan-diffusers --local_dir=/workspace/data/FastHunyuan-diffusers --repo_type=model
+
 # Expose port for FastAPI
 EXPOSE 8000
 

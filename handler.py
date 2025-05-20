@@ -145,6 +145,9 @@ class VideoGenerationRequest(BaseModel):
     fps: int = 24
     flow_shift: int = 17
 
+# Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
+multiprocessing.set_start_method('spawn', force=True)
+
 @app.post("/generate-video")
 async def generate_video(request: VideoGenerationRequest):
     try:
@@ -242,8 +245,6 @@ async def generate_video(request: VideoGenerationRequest):
 
 # Start the FastAPI server
 if __name__ == '__main__':
-    # Add multiprocessing support for Windows if needed
-    multiprocessing.freeze_support()
     # Initialize the pipeline once at startup
     initialize_pipeline()
     # Start the FastAPI server
