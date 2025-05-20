@@ -15,6 +15,7 @@ from botocore.exceptions import ClientError
 from botocore.config import Config
 from diffusers.utils import export_to_video
 from fastvideo.models.hunyuan_hf.modeling_hunyuan import HunyuanVideoTransformer3DModel
+from transformers import BitsAndBytesConfig
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -91,13 +92,24 @@ def initialize_pipeline():
             if not os.path.exists(MODEL_PATH):
                 raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
             
-            # Load transformer model separately
+            # Load transformer model with quantization
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                llm_int8_skip_modules=["proj_out", "norm_out"]
+            )
+            
             transformer = HunyuanVideoTransformer3DModel.from_pretrained(
                 MODEL_PATH,
                 subfolder="transformer/",
-                torch_dtype=weight_dtype
+                torch_dtype=weight_dtype,
+                quantization_config=quantization_config
             )
+            
+            print("Max vram for read transformer:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
             torch.cuda.reset_max_memory_allocated(device)
+            
             # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
@@ -112,11 +124,11 @@ def initialize_pipeline():
             
             # Set flow shift parameter
             pipeline.scheduler._shift = 17  # Default flow shift
-            print("Max vram for init pipeline:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
 
             # Enable CPU offload
-            pipeline.enable_model_cpu_offload(device)
+            pipeline.enable_model_cpu_offload()
             
+            print("Max vram for init pipeline:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
             print("Pipeline initialized successfully")
         except Exception as e:
             print(f"Error initializing pipeline: {str(e)}")
@@ -167,6 +179,7 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         # Generate the video with torch.autocast for better performance
         with torch.autocast("cuda", dtype=torch.bfloat16):
             # Generate the video
+            start_time = time.perf_counter()
             output = pipeline(
                 prompt=prompt,
                 height=height,
@@ -184,7 +197,9 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         # Export the video
         export_to_video(output, video_path, fps=fps)
         print(f"Video generated at: {video_path}")
-        
+        print("Time:", round(time.perf_counter() - start_time, 2), "seconds")
+        print("Max vram for denoise:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
+
         # Upload the video to S3
         upload_file(video_path, 
                     user_uuid, 
