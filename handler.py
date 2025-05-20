@@ -156,6 +156,9 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         # Initialize the pipeline
         pipeline = initialize_pipeline()
         
+        if pipeline is None:
+            raise ValueError("Failed to initialize pipeline")
+        
         # Set up generator for reproducibility
         generator = torch.Generator("cpu").manual_seed(seed if seed is not None else torch.seed())
         
@@ -175,6 +178,10 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
                 generator=generator,
             ).frames[0]
         
+        # Check if output is None
+        if output is None:
+            raise ValueError("Pipeline returned None for output frames")
+            
         # Export the video
         export_to_video(output, video_path, fps=fps)
         print(f"Video generated at: {video_path}")
@@ -187,6 +194,9 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         print(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
     except Exception as e:
         print(f"Error in background task: {str(e)}")
+        # Log the full traceback for better debugging
+        import traceback
+        traceback.print_exc()
 
 @app.post("/generate-video")
 async def generate_video(request: VideoGenerationRequest):
