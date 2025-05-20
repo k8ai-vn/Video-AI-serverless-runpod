@@ -6,8 +6,8 @@ import random
 import string
 import logging
 import datetime
-import threading
-from typing import Optional, List, Dict
+import multiprocessing
+from typing import Optional, List
 
 import torch
 import boto3
@@ -17,7 +17,7 @@ from diffusers.utils import export_to_video
 from fastvideo.models.hunyuan_hf.modeling_hunyuan import HunyuanVideoTransformer3DModel
 from transformers import BitsAndBytesConfig
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from fastvideo.models.hunyuan_hf.pipeline_hunyuan import HunyuanVideoPipeline
@@ -27,6 +27,7 @@ NETWORK_STORAGE_PATH = os.environ.get('NETWORK_STORAGE', '/workspace')
 OUTPUT_PATH = os.path.join(NETWORK_STORAGE_PATH, 'outputs')
 S3_BUCKET = 'ttv-storage'
 S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY')
+print('S3_ACCESS_KEY', S3_ACCESS_KEY)
 S3_SECRET_KEY = os.environ.get('S3_SECRET_KEY')
 MODEL_PATH = os.environ.get('MODEL_PATH', '/workspace/data/FastHunyuan-diffusers')
 
@@ -45,10 +46,6 @@ s3_client = boto3.client('s3',
                 )
             )
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
 def upload_file(file_name, user_uuid, bucket, object_name=None):
     """Upload a file to an S3 bucket
 
@@ -63,112 +60,99 @@ def upload_file(file_name, user_uuid, bucket, object_name=None):
 
     # Upload the file
     object_name = file_name.split('/')[-1]
-    logger.info(f'object_name: {object_name}')
+    print('object_name', object_name)
     object_name = user_uuid + '/' + object_name
-    logger.info(f'full object_name: {object_name}')
+    print('object_name', object_name)
+    response = s3_client.upload_file(file_name, bucket, object_name)
     
-    try:
-        response = s3_client.upload_file(file_name, bucket, object_name)
+    # Create a presigned URL for the file
+    presigned_url = s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': bucket, 'Key': object_name},
+        ExpiresIn=3600  # URL will be valid for 1 hour
+    )   
+    print(presigned_url)
+    # delete file from local
+    os.remove(file_name)
         
-        # Create a presigned URL for the file
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket, 'Key': object_name},
-            ExpiresIn=3600  # URL will be valid for 1 hour
-        )   
-        logger.info(f"Generated presigned URL: {presigned_url}")
-        
-        # delete file from local storage to save space
-        os.remove(file_name)
-        return presigned_url
-    except ClientError as e:
-        logger.error(f"Error uploading file to S3: {str(e)}")
-        return None
+    return True
 
-# Global pipeline instance - only initialize once
-PIPELINE = None
-PIPELINE_LOCK = threading.Lock()
-
-def get_pipeline(quantization="fp16"):
-    """Get or initialize the pipeline with singleton pattern"""
-    global PIPELINE
-    
-    with PIPELINE_LOCK:
-        if PIPELINE is None:
-            try:
-                logger.info(f"Initializing pipeline with quantization: {quantization}")
-                device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
-                # Use bfloat16 for compatibility with FlashAttention
-                weight_dtype = torch.bfloat16
-                
-                logger.info(f"Loading model from: {MODEL_PATH}")
-                
-                # Check if model path exists
-                if not os.path.exists(MODEL_PATH):
-                    raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
-                
-                # Load transformer model with appropriate quantization
-                if quantization == "nf4":
-                    quantization_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                        bnb_4bit_quant_type="nf4",
-                        llm_int8_skip_modules=["proj_out", "norm_out"]
-                    )
-                    transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                        MODEL_PATH,
-                        subfolder="transformer/",
-                        torch_dtype=weight_dtype,
-                        quantization_config=quantization_config
-                    )
-                elif quantization == "int8":
-                    quantization_config = BitsAndBytesConfig(
-                        load_in_8bit=True, 
-                        llm_int8_skip_modules=["proj_out", "norm_out"]
-                    )
-                    transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                        MODEL_PATH,
-                        subfolder="transformer/",
-                        torch_dtype=weight_dtype,
-                        quantization_config=quantization_config
-                    )
-                else:  # fp16 or bf16
-                    transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-                        MODEL_PATH,
-                        subfolder="transformer/",
-                        torch_dtype=weight_dtype
-                    ).to(device)
-                
-                logger.info(f"Max VRAM for transformer load: {round(torch.cuda.max_memory_allocated(device='cuda') / 1024**3, 3)} GiB")
-                torch.cuda.reset_max_memory_allocated(device)
-                
-                # Initialize pipeline with the loaded transformer
-                PIPELINE = HunyuanVideoPipeline.from_pretrained(
-                    MODEL_PATH, 
-                    transformer=transformer,
-                    torch_dtype=weight_dtype,
-                    local_files_only=True
+# Initialize the pipeline
+pipeline = None
+def initialize_pipeline(quantization="nf4"):
+    global pipeline
+    if pipeline is None:
+        try:
+            device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
+            # Use bfloat16 for compatibility with FlashAttention
+            weight_dtype = torch.bfloat16
+            
+            print(f"Loading model from: {MODEL_PATH}")
+            
+            # Check if model path exists
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError(f"Model path {MODEL_PATH} does not exist")
+            
+            # Load transformer model with appropriate quantization
+            if quantization == "nf4":
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    llm_int8_skip_modules=["proj_out", "norm_out"]
                 )
-                torch.cuda.reset_max_memory_allocated(device)
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype,
+                    quantization_config=quantization_config
+                )
+            elif quantization == "int8":
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True, 
+                    llm_int8_skip_modules=["proj_out", "norm_out"]
+                )
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype,
+                    quantization_config=quantization_config
+                )
+            else:  # No quantization
+                transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                    MODEL_PATH,
+                    subfolder="transformer/",
+                    torch_dtype=weight_dtype
+                ).to(device)
+            
+            print("Max vram for read transformer:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
+            torch.cuda.reset_max_memory_allocated(device)
+            
+            # Initialize pipeline with the loaded transformer
+            pipeline = HunyuanVideoPipeline.from_pretrained(
+                MODEL_PATH, 
+                transformer=transformer,
+                torch_dtype=weight_dtype,
+                local_files_only=True
+            )
+            torch.cuda.reset_max_memory_allocated(device)
 
-                # Enable VAE tiling for better memory usage
-                PIPELINE.enable_vae_tiling()
-                
-                # Set flow shift parameter
-                PIPELINE.scheduler._shift = 17  # Default flow shift
+            # Enable VAE tiling for better memory usage
+            pipeline.enable_vae_tiling()
+            
+            # Set flow shift parameter
+            pipeline.scheduler._shift = 17  # Default flow shift
 
-                # Enable CPU offload for memory efficiency
-                PIPELINE.enable_model_cpu_offload()
-                
-                logger.info(f"Max VRAM for pipeline initialization: {round(torch.cuda.max_memory_allocated(device='cuda') / 1024**3, 3)} GiB")
-                logger.info("Pipeline initialized successfully and will remain in memory")
-            except Exception as e:
-                logger.error(f"Error initializing pipeline: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-                raise
+            # Enable CPU offload
+            pipeline.enable_model_cpu_offload()
+            
+            print("Max vram for init pipeline:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
+            print("Pipeline initialized successfully")
+        except Exception as e:
+            print(f"Error initializing pipeline: {str(e)}")
+            raise
     
-    return PIPELINE
+    return pipeline
 
 # Initialize FastAPI app
 app = FastAPI(title="Hunyuan Video Generation API")
@@ -188,46 +172,26 @@ class VideoGenerationRequest(BaseModel):
     output_path: Optional[str] = None
     fps: int = 24
     flow_shift: int = 17
-    quantization: str = "fp16"  # Options: fp16, bf16, nf4, int8
-    video_length: Optional[float] = None  # Parameter for video length in seconds
+    quantization: str = "fp16"  # Options: fp16 and bf16, or None/empty string for no quantization
+    video_length: Optional[float] = None  # New parameter for video length in seconds
 
-# Store ongoing tasks
-active_tasks: Dict[str, Dict] = {}
-tasks_lock = threading.Lock()
+# Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
+multiprocessing.set_start_method('spawn', force=True)
 
-# Background task for video generation
-async def generate_video_task(
-    task_id: str,
-    prompt: str, 
-    output_path: str,
-    video_path: str,
-    video_file_name: str,
-    user_uuid: str, 
-    height: int,
-    width: int,
-    num_frames: int,
-    num_inference_steps: int,
-    guidance_scale: float, 
-    negative_prompt: Optional[str],
-    seed: Optional[int],
-    flow_shift: int,
-    fps: int,
-    quantization: str,
-    video_length: Optional[float] = None
-):
+# Define the video generation task function at module level (not nested)
+def generate_video_task(prompt, output_path, video_path, video_file_name, user_uuid, 
+                        height, width, num_frames, num_inference_steps, guidance_scale, 
+                        negative_prompt, seed, flow_shift, fps, quantization, video_length=None):
     try:
-        # Update task status
-        with tasks_lock:
-            active_tasks[task_id]["status"] = "processing"
-        
-        # Get the already initialized pipeline
-        pipeline = get_pipeline(quantization)
+        # Initialize the pipeline with specified quantization
+        pipeline = initialize_pipeline(quantization)
         device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if pipeline is None:
+            raise ValueError("Failed to initialize pipeline")
         
         # Set up generator for reproducibility
-        if seed is None:
-            seed = random.randint(0, 2**32 - 1)
-        generator = torch.Generator("cpu").manual_seed(seed)
+        generator = torch.Generator("cpu").manual_seed(seed if seed is not None else torch.seed())
         torch.cuda.reset_max_memory_allocated(device)
         
         # Set flow shift parameter
@@ -236,16 +200,14 @@ async def generate_video_task(
         # Adjust num_frames based on video_length if provided
         if video_length is not None:
             num_frames = int(video_length * fps)
-            logger.info(f"Adjusted num_frames to {num_frames} based on video_length of {video_length} seconds at {fps} fps")
+            print(f"Adjusted num_frames to {num_frames} based on video_length of {video_length} seconds at {fps} fps")
         
         # Generate the video with torch.autocast for better performance
-        logger.info(f"Starting video generation for task {task_id}")
-        start_time = time.perf_counter()
-        
         with torch.autocast("cuda", dtype=torch.bfloat16):
+            # Generate the video
+            start_time = time.perf_counter()
             output = pipeline(
                 prompt=prompt,
-                # negative_prompt=negative_prompt,
                 height=height,
                 width=width,
                 num_frames=num_frames,
@@ -260,41 +222,29 @@ async def generate_video_task(
             
         # Export the video
         export_to_video(output, video_path, fps=fps)
-        generation_time = round(time.perf_counter() - start_time, 2)
-        logger.info(f"Video generated at: {video_path}")
-        logger.info(f"Generation time: {generation_time} seconds")
-        logger.info(f"Max VRAM usage: {round(torch.cuda.max_memory_allocated(device='cuda') / 1024**3, 3)} GiB")
+        print(f"Video generated at: {video_path}")
+        print("Time:", round(time.perf_counter() - start_time, 2), "seconds")
+        print("Max vram for denoise:", round(torch.cuda.max_memory_allocated(device="cuda") / 1024**3, 3), "GiB")
 
         # Upload the video to S3
-        presigned_url = upload_file(video_path, user_uuid, S3_BUCKET, video_file_name)
-        logger.info(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
-        
-        # Update task status to completed
-        with tasks_lock:
-            active_tasks[task_id]["status"] = "completed"
-            active_tasks[task_id]["presigned_url"] = presigned_url
-            active_tasks[task_id]["generation_time"] = generation_time
-            active_tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
-            
+        upload_file(video_path, 
+                    user_uuid, 
+                    S3_BUCKET, 
+                    video_file_name)
+        print(f"Uploaded video to s3://{S3_BUCKET}/{user_uuid}/{video_file_name}")
     except Exception as e:
-        logger.error(f"Error in background task: {str(e)}")
+        print(f"Error in background task: {str(e)}")
         # Log the full traceback for better debugging
         import traceback
-        logger.error(traceback.format_exc())
-        
-        # Update task status to failed
-        with tasks_lock:
-            active_tasks[task_id]["status"] = "failed"
-            active_tasks[task_id]["error"] = str(e)
-            active_tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
+        traceback.print_exc()
 
 @app.post("/generate-video")
-async def generate_video(request: VideoGenerationRequest, background_tasks: BackgroundTasks):
+async def generate_video(request: VideoGenerationRequest):
     try:
-        logger.info("Received video generation request")
+        print(f"Worker Start")
         
-        # Make sure pipeline is initialized but don't reload
-        _ = get_pipeline(request.quantization)
+        # Initialize the pipeline if not already done
+        pipeline = initialize_pipeline(request.quantization)
 
         # Define output path
         output_path = request.output_path or os.path.join(OUTPUT_PATH, 'my_videos/')
@@ -313,16 +263,44 @@ async def generate_video(request: VideoGenerationRequest, background_tasks: Back
         actual_num_frames = request.num_frames
         if request.video_length is not None:
             actual_num_frames = int(request.video_length * request.fps)
-            logger.info(f"Using video_length parameter: {request.video_length} seconds at {request.fps} fps = {actual_num_frames} frames")
+            print(f"Using video_length parameter: {request.video_length} seconds at {request.fps} fps = {actual_num_frames} frames")
         
-        # Store task information
-        with tasks_lock:
-            active_tasks[task_id] = {
-                "status": "queued",
-                "started_at": datetime.datetime.now().isoformat(),
+        # Start the background process
+        process = multiprocessing.Process(
+            target=generate_video_task,
+            args=(
+                request.prompt,
+                output_path,
+                video_path,
+                video_file_name,
+                request.user_uuid,
+                request.height,
+                request.width,
+                actual_num_frames,  # Use the calculated number of frames
+                request.num_inference_steps,
+                request.guidance_scale,
+                request.negative_prompt,
+                request.seed,
+                request.flow_shift,
+                request.fps,
+                request.quantization,
+                request.video_length
+            )
+        )
+        process.daemon = True  # Set as daemon so it doesn't block program exit
+        process.start()
+        
+        # Return immediately with task ID
+        s3_url = f"s3://{S3_BUCKET}/{request.user_uuid}/{video_file_name}"
+        return {
+            "output": {
+                "status": "processing",
+                "task_id": task_id,
                 "prompt": request.prompt,
+                "expected_video_path": video_path,
+                "expected_s3_url": s3_url,
                 "parameters": {
-                    "num_frames": actual_num_frames,
+                    "num_frames": actual_num_frames,  # Return the actual number of frames
                     "width": request.width,
                     "height": request.height,
                     "num_inference_steps": request.num_inference_steps,
@@ -332,79 +310,17 @@ async def generate_video(request: VideoGenerationRequest, background_tasks: Back
                     "seed": request.seed,
                     "fps": request.fps,
                     "quantization": request.quantization,
-                    "video_length": request.video_length
-                }
-            }
-        
-        # Add the task to background tasks
-        background_tasks.add_task(
-            generate_video_task,
-            task_id,
-            request.prompt,
-            output_path,
-            video_path,
-            video_file_name,
-            request.user_uuid,
-            request.height,
-            request.width,
-            actual_num_frames,
-            request.num_inference_steps,
-            request.guidance_scale,
-            request.negative_prompt,
-            request.seed,
-            request.flow_shift,
-            request.fps,
-            request.quantization,
-            request.video_length
-        )
-        
-        # Return immediately with task ID
-        s3_url = f"s3://{S3_BUCKET}/{request.user_uuid}/{video_file_name}"
-        return {
-            "output": {
-                "status": "queued",
-                "task_id": task_id,
-                "prompt": request.prompt,
-                "expected_video_path": video_path,
-                "expected_s3_url": s3_url,
-                "parameters": {
-                    "num_frames": actual_num_frames,
-                    "width": request.width,
-                    "height": request.height,
-                    "num_inference_steps": request.num_inference_steps,
-                    "guidance_scale": request.guidance_scale,
-                    "embedded_cfg_scale": request.embedded_cfg_scale,
-                    "flow_shift": request.flow_shift,
-                    "seed": request.seed or "random",
-                    "fps": request.fps,
-                    "quantization": request.quantization,
-                    "video_length": request.video_length
+                    "video_length": request.video_length  # Include the video_length in the response
                 }
             }
         }
     except Exception as e:
-        logger.error(f"Error handling video generation request: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/task/{task_id}")
-async def get_task_status(task_id: str):
-    """Get the status of a task by task ID"""
-    with tasks_lock:
-        if task_id not in active_tasks:
-            raise HTTPException(status_code=404, detail="Task not found")
-        return {"task": active_tasks[task_id]}
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "model_loaded": PIPELINE is not None}
 
 # Start the FastAPI server
 if __name__ == '__main__':
     # Initialize the pipeline once at startup
-    get_pipeline()
+    initialize_pipeline()
     # Start the FastAPI server
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
