@@ -97,27 +97,25 @@ def initialize_pipeline():
             if not os.path.exists(transformer_path):
                 raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
             
-            # Monkey patch the forward method to handle the pooled_projections argument
-            original_forward = HunyuanVideoTransformer3DModel.forward
-            def patched_forward(self, *args, **kwargs):
-                # Ensure pooled_projections is not None to avoid the 'NoneType' has no attribute 'dtype' error
-                if 'pooled_projections' not in kwargs or kwargs['pooled_projections'] is None:
-                    # Create a tensor with the correct shape (768 instead of 1024)
-                    hidden_size = 768  # Use the correct size for the model
-                    kwargs['pooled_projections'] = torch.zeros(1, hidden_size, dtype=weight_dtype).to(device)
-                return original_forward(self, *args, **kwargs)
+            # Load transformer model separately to apply monkey patch
+            transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+                transformer_path,
+                torch_dtype=weight_dtype
+            )
             
-            HunyuanVideoTransformer3DModel.forward = patched_forward
-            
-            # Initialize pipeline
+            # Initialize pipeline with the loaded transformer
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
+                transformer=transformer,
                 torch_dtype=weight_dtype,
                 local_files_only=True
             )
             
             # Enable VAE tiling for better memory usage
             pipeline.enable_vae_tiling()
+            
+            # Set flow shift parameter
+            pipeline.scheduler._shift = 17  # Default flow shift
             
             # Enable CPU offload if needed
             pipeline.enable_model_cpu_offload()
@@ -170,7 +168,7 @@ def generate_video_task(prompt, output_path, video_path, video_file_name, user_u
         
         # Generate the video with torch.autocast for better performance
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            # Remove negative_prompt as it's not supported by the pipeline
+            # Generate the video
             output = pipeline(
                 prompt=prompt,
                 height=height,
