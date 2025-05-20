@@ -97,8 +97,16 @@ def initialize_pipeline():
             if not os.path.exists(transformer_path):
                 raise FileNotFoundError(f"Transformer path {transformer_path} does not exist")
             
-            # Initialize pipeline directly without manually loading the transformer
-            # This avoids the pooled_projections argument error
+            # Monkey patch the forward method to handle the pooled_projections argument
+            original_forward = HunyuanVideoTransformer3DModel.forward
+            def patched_forward(self, *args, **kwargs):
+                if 'pooled_projections' not in kwargs:
+                    kwargs['pooled_projections'] = None
+                return original_forward(self, *args, **kwargs)
+            
+            HunyuanVideoTransformer3DModel.forward = patched_forward
+            
+            # Initialize pipeline
             pipeline = HunyuanVideoPipeline.from_pretrained(
                 MODEL_PATH, 
                 torch_dtype=weight_dtype,
