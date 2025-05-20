@@ -245,7 +245,7 @@ async def generate_video_task(
         with torch.autocast("cuda", dtype=torch.bfloat16):
             output = pipeline(
                 prompt=prompt,
-                negative_prompt=negative_prompt,
+                # negative_prompt=negative_prompt,
                 height=height,
                 width=width,
                 num_frames=num_frames,
