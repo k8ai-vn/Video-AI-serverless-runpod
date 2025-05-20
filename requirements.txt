@@ -1,3 +1,2 @@
 runpod
 boto3
-fastvideo
